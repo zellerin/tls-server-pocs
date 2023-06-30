@@ -1,0 +1,22 @@
+#+AUTHOR: _Tomáš Zellerin <tomas@zellerin.cz>_
+
+* Trying build TLS servers in Common Lisp
+
+This repository is to be used to test draft and PoC's of TLS server.
+
+Currently, I have a thread based server in http2, but I want to play with
+different options how to build such a server.
+
+For testing I use simple server-side logic: patiently read whatever client
+sends, and then send fixed headers and (short) body
+
+** Keeping it simple: single client server
+Version in the [[file:single.lisp][single.lisp]] gives up on trying to serve more clients: when it
+gets connection, it reads the requests and handles them as they arrive. When the
+client sends go-away frame, it closes connection and is ready to serve another
+client.
+
+** Threaded
+This is what is currently in http2
+
+## Use C-c C-x x to insert documentation.
