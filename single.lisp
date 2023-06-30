@@ -26,6 +26,40 @@ Use TLS KEY and CERT for server identity."
 
 (declaim ((function * (simple-array (unsigned-byte 8) *)) octetize))
 
+(defun read-tls-sequence (stream buf start end)
+  "Read octets from binary STREAM to BUF between START (inclusive) and
+END (exclusive).
+
+Return number of read octets; this can be less than (end-start) or even zero.
+
+This is faster than CL+SSL out of box read-sequence, but cannot be mixed with
+the other ways to read octets (read-byte etc)."
+  (declare
+   (fixnum start end)
+   ((simple-array (unsigned-byte 8) *) buf))
+  (handler-case
+      (let ((handle (cl+ssl::ssl-stream-handle stream)))
+        (cffi:with-pointer-to-vector-data (ptr buf)
+          (cl+ssl::ensure-ssl-funcall
+           stream #'plusp #'cl+ssl::ssl-read handle (cffi:inc-pointer ptr start)
+           (- end start))))
+    (cl+ssl::ssl-error-zero-return ()
+      0)))
+
+(defun write-tls-sequence (stream buf start end)
+  "Write octets in the BUF from START till END to the STREAM."
+  (declare
+   (fixnum start end)
+   ((simple-array (unsigned-byte 8) *) buf)
+   (cl+ssl::ssl-stream stream))
+  (let ((handle (cl+ssl::ssl-stream-handle stream)))
+    (unless handle
+      (error "output operation on closed SSL stream"))
+    (cffi:with-pointer-to-vector-data (ptr buf)
+      (cl+ssl::ensure-ssl-funcall stream #'plusp #'cl+ssl::ssl-write handle
+                                  (cffi:inc-pointer ptr start)
+                                  (- end start)))))
+
 (locally (declare (optimize speed)
                   ((simple-array (unsigned-byte 8) (*)) *buffer*))
 
@@ -68,7 +102,7 @@ The idea is to replace this later by a single thread for reading from several
 sources."
     (declare (fixnum to-read))
     (loop with read fixnum = 0
-          do (setf read (read-sequence vector stream :end to-read))
+          do (setf read (read-tls-sequence stream vector read to-read))
           until (= read to-read)
           finally
              (return vector)))
