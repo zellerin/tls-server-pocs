@@ -1,5 +1,12 @@
 (in-package mini-http2)
 
+(mgl-pax:defsection @use-http2-lib
+    (:title "Server built using HTTP2 package.")
+  "Server implementations so far used the simplified HTTP/2 protocol described
+[above][mini-http2::@http2-protocol]. Now we do the same using [HTTP2][asdf/system:system] to compare the ease of
+implementation and speed."
+  (do-new-connection (method () (t t (eql :none/http2)))))
+
 (defclass naive-server-connection (http2::server-http2-connection)
   ()
   (:default-initargs :stream-class 'naive-server-stream))
@@ -44,15 +51,7 @@ Terminate if either SSL error occurs, or go-away restart is invoked."
     (go-away ())))
 
 (defmethod do-new-connection (listening-socket tls (dispatch-method (eql :none/http2)))
-  "Handle the connection while doing nothing else.
-
-This version (DISPATCH-METHOD being :none) gives up on trying to serve more
-clients: when it gets connection, it reads the requests and handles them as they
-arrive. When the client sends go-away frame, it closes connection and is ready
-to serve another client.
-
-Obviously, there is little overhead and this version is pretty fast, especially
-with requet pilelining."
+  "Handle the connection while doing nothing else using HTTP2 asdf library for actual work. Otherwise it is same as the :NONE method (i.e., serving a single client)"
 
   (usocket:with-connected-socket (plain (usocket:socket-accept listening-socket
                                                                :element-type '(unsigned-byte 8)))

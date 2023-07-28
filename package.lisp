@@ -40,5 +40,8 @@ So this repository implements:
 - several versions of TCP server that accept and handle the request."
   (mini-http2::@http2-protocol mgl-pax:section)
   (mini-http2::@server-actions mgl-pax:section)
+  (mini-http2::@use-http2-lib mgl-pax:section)
   (tls-server/nonblock::@nonblock-server mgl-pax:section)
   (tls-server/poll-dispatcher::@poll-dispatcher mgl-pax:section))
+
+; (mgl-pax:update-asdf-system-html-docs mini-http2::@http2-server-pocs :tls-server)
