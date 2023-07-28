@@ -13,5 +13,4 @@
 (asdf:load-asd (truename (make-pathname :defaults "./foo.asd"
                                          :name *asdf-system-name*)))
 
-(trace sb-impl::refill-input-buffer)
 (asdf:oos 'asdf:test-op *asdf-system-name* :silent t)

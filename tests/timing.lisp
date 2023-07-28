@@ -19,13 +19,9 @@
           val-as-num)))))
 
 (fiasco:deftest test-speed-single ()
-  (dolist (method '(:none :thread :poll))
-    (format t "~&No TLS, ~a~%" method)
-    (mini-http2:create-server
-     0 nil method
-     :announce-url-callback (callback-on-server #'test-port)))
-  (dolist (method '(:none :thread))
-    (format t "~&TLS, ~a~%" method)
-    (mini-http2:create-server
-     0 :tls method
-     :announce-url-callback (callback-on-server #'test-port))))
+  (dolist (tls '(nil :tls))
+    (dolist (method '(:none :none/http2 :thread :poll))
+      (format t "~&TLS: ~a, ~a~%" tls method)
+      (mini-http2:create-server
+       0 tls method
+       :announce-url-callback (callback-on-server #'test-port)))))

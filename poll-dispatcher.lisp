@@ -14,6 +14,9 @@
   (wait-for-fd function)
   (remove-fd function)
   (fd-info-stream mgl-pax:structure-accessor)
+  (fd-info-read-action mgl-pax:structure-accessor)
+  (fd-info-buffer mgl-pax:structure-accessor)
+  (fd-info-bytes-needed mgl-pax:structure-accessor)
 
   "For SBCL: SB-IMPL::FD-STREAM has IBUF slot that is SB-IMPL::BUFFER structure of size (* 8 1024) that has buffered read data; slots HEAD and TAIL indicate how much space is inside.
 
@@ -62,7 +65,8 @@ So what should work when we get data is to read once, and then check HEAD and TA
   fd (pollfd-index 0 :type fixnum)
   (read-action (constantly nil) :type compiled-function)
   (write-action (constantly nil) :type compiled-function)
-  direction stream)
+  direction stream
+  buffer bytes-needed)
 
 (defun print-fd-info (object stream)
   (print-unreadable-object (object stream :type t)
@@ -147,15 +151,30 @@ CLIENT-DATA."
   (setf (client-data-socket-list client-data)
         (remove fd-info (client-data-socket-list client-data))))
 
+(defun have-enough-bytes (fd-info needed)
+  (map-into (fd-info-buffer fd-info) (constantly 0))
+  (when (plusp needed)
+    (let* ((read-octets
+             (read-sequence
+              (fd-info-buffer fd-info)
+              (tls-server/poll-dispatcher::fd-info-stream fd-info) :end needed)))
+      (cond ((zerop read-octets)
+             (format t "EOF detected, leaving~%")
+             (invoke-restart 'go-away fd-info))
+            ((/= read-octets needed)
+             (format t "Partial read detected, leaving~%")
+             (invoke-restart 'go-away fd-info)))))
+  t)
+
 (defun enough-data-available (fd-info)
   "When we read more data than needed, is it enough for next chunk?"
-  #-sbcl nil ; we do not know
+  #-sbcl nil                            ; we do not know
   #+sbcl (when (tls-server/nonblock::connection-fd-info-p fd-info)
            (let ((ibuf (SB-IMPL::FD-STREAM-ibuf (fd-info-stream fd-info))))
              (and ibuf
                   (>= (- (sb-impl::buffer-tail ibuf)
                          (sb-impl::buffer-tail ibuf))
-                              (tls-server/nonblock::connection-fd-info-bytes-needed fd-info))))))
+                      (tls-server/nonblock::connection-fd-info-bytes-needed fd-info))))))
 
 (defun wait-for-fd (client-data)
   "Wait until any of monitored clients is available as required.
@@ -177,10 +196,21 @@ Call appropriate callback for such connection."
                           (remove-fd client-data fd-info))
              (when (logtest revents (logior 1 8 16)) ; sb-unix:pollin pollhup
                (handler-case
-                   (loop for doit = (funcall (fd-info-read-action fd-info) client-data fd-info)
-                         while (enough-data-available fd-info))
+                   (when (have-enough-bytes fd-info (fd-info-bytes-needed fd-info))
+                     (funcall (fd-info-read-action fd-info) client-data fd-info)
+                     #+nil                     (loop while (print (enough-data-available fd-info))
+                                                     do
+                                                        (funcall (fd-info-read-action fd-info) client-data fd-info)))
                  (stream-error ()
-                   (push fd-info bad))))
+                   (push fd-info bad))
+                 (cl+ssl::ssl-error (e)
+                   ;; ended by ssl error
+                   (push fd-info bad)
+                   (unless (member (type-of e) '(cl+ssl::ssl-error-syscall))
+                     (describe e)))
+                 (error (e)
+                   (unless (member (type-of e) '(sb-int:broken-pipe))
+                     (describe e)))))
              (when (logtest revents (logior 4)) ; sb-unix:pollin
                (funcall (fd-info-write-action fd-info) client-data fd-info)))
         finally
@@ -193,4 +223,4 @@ Call appropriate callback for such connection."
 (defun client-data-cleanup-sockets (client-data)
   (loop for item in (client-data-socket-list client-data)
         when (typep (fd-info-stream item) 'stream)
-        do (close (fd-info-stream item))))
+          do (ignore-errors (close (fd-info-stream item)))))

@@ -31,10 +31,11 @@
 
 (deftest http2-client-curl ()
   "Test the server from http2-based client."
-  (dolist (model '(:none :thread :poll))
-    (mini-http2:create-server 0 nil model
-                              :announce-url-callback (callback-on-server
-                                                      #'query-port-using-curl))))
+  (dolist (tls '(nil :tls))
+    (dolist (model '(:none :thread :poll))
+      (mini-http2:create-server 0 nil model
+                                :announce-url-callback (callback-on-server
+                                                        #'query-port-using-curl)))))
 
 (deftest http2-client-native ()
   "Test the server from http2-based client."
