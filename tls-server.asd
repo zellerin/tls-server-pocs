@@ -10,15 +10,15 @@
   :version "0.0.1"
   :serial t
   :in-order-to ((asdf::test-op (asdf:test-op "tls-server/test")))
-  :depends-on ("cl+ssl" "usocket" "bordeaux-threads" "mgl-pax" "puri" "http2")
+  :depends-on ("cl+ssl" "usocket" "bordeaux-threads" "mgl-pax" "puri" "http2"
+                        "cl-async")
   :components ((:file "package")
                (:file "utils")
                (:file "http2")
                (:file "tls")
                (:file "single")
                (:file "with-http2-lib")
-               (:file "poll-dispatcher")
-               (:file "nonblock")))
+               (:file "uv")))
 
 (defsystem #:tls-server/test
   :depends-on ("tls-server" "fiasco" "cl-ppcre" "puri" "http2/client")

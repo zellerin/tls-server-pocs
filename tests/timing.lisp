@@ -20,7 +20,7 @@
 
 (fiasco:deftest test-speed-single ()
   (dolist (tls '(nil :tls))
-    (dolist (method '(:none :none/http2 :thread :poll))
+    (dolist (method '(:none :none/http2 :thread :async))
       (format t "~&TLS: ~a, ~a~%" tls method)
       (mini-http2:create-server
        0 tls method

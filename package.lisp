@@ -15,20 +15,13 @@
            #:read-client-preface
            #:create-server))
 
-(mgl-pax:define-package #:tls-server/poll-dispatcher
-  (:use #:cl #:cffi)
-  (:export #:call-with-pollfds #:add-fd  #:remove-fd #:client-data-cleanup-sockets
-           #:unix-read
-           #:fd-info #:fd-info-read-action #:fd-info-write-action #:fd-info-stream
-           #:make-fd-info
-           #:wait-for-fd))
-
-(mgl-pax:define-package #:tls-server/nonblock
-  (:use #:cl #:mini-http2
-        #:tls-server/poll-dispatcher))
+(mgl-pax:define-package #:tls-server/async
+  (:use #:cl #:mini-http2)
+  (:import-from #:cl-async #:socket-data #:write-socket-data #:close-socket
+                #:start-event-loop #:tcp-server))
 
 (in-package #:mini-http2)
-(mgl-pax:defsection mini-http2::@http2-server-pocs
+(mgl-pax:defsection mini-http2::@index
     (:title "Experiments with HTTP/2 server")
   "I wanted to play with different options for HTTP/2 server implementations. While
 I have a more correct implementation of HTTP/2, I wanted something
@@ -41,7 +34,6 @@ So this repository implements:
   (mini-http2::@http2-protocol mgl-pax:section)
   (mini-http2::@server-actions mgl-pax:section)
   (mini-http2::@use-http2-lib mgl-pax:section)
-  (tls-server/nonblock::@nonblock-server mgl-pax:section)
-  (tls-server/poll-dispatcher::@poll-dispatcher mgl-pax:section))
+  (tls-server/async::@async  mgl-pax:section))
 
-; (mgl-pax:update-asdf-system-html-docs mini-http2::@http2-server-pocs :tls-server)
+; (mgl-pax:update-asdf-system-html-docs mini-http2::@index :tls-server)
