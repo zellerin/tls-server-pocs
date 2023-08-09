@@ -31,9 +31,10 @@ So this repository implements:
 
 - very simplified (and indeed incorrect in few ways) but server side of HTTP/2 protocol, and based of that
 - several versions of TCP server that accept and handle the request."
-  (mini-http2::@http2-protocol mgl-pax:section)
   (mini-http2::@server-actions mgl-pax:section)
+  (mini-http2::@synchronous mgl-pax:section)
   (mini-http2::@use-http2-lib mgl-pax:section)
-  (tls-server/async::@async  mgl-pax:section))
+  (tls-server/async::@async  mgl-pax:section)
+  (mini-http2::@http2-protocol mgl-pax:section))
 
 ; (mgl-pax:update-asdf-system-html-docs mini-http2::@index :tls-server)

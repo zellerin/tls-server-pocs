@@ -1,13 +1,21 @@
 (in-package mini-http2)
 
-(mgl-pax:defsection @http2-protocol (:title "HTTP/2 protocol, very simplified and incorrect")
-  "Simplified HTTP/2 protocol overview is as follows:"
+(mgl-pax:defsection @http2-protocol (:title "HTTP/2 protocol.")
+  "Simplified - and incorrect in many corner cases - HTTP/2 protocol implemented
+here is is as follows. This should be sufficient to respond to a browser, curl
+or h2load."
   (+client-preface-start+ variable)
   (*settings-frame* variable)
   (*ack-frame* variable)
   (stream-id type)
   (*data-frame* variable)
-  (+goaway-frame-type+ variable))
+  (+goaway-frame-type+ variable)
+  (get-frame-size function)
+  (get-stream-id function)
+  (get-frame-type function)
+  (get-frame-flags function)
+  (get-stream-id-if-ends function)
+  (buffer-with-changed-stream function))
 
 (defvar +client-preface-start+
   #(80 82 73 32 42 32 72 84 84 80 47 50 46 48 13 10 13 10 83 77 13 10 13 10)
@@ -16,6 +24,7 @@ notation is this. That is, the connection preface starts with the string \"PRI *
  HTTP/2.0\\r\\n\\r\\nSM\\r\\n\\r\\n\".")
 
 (defconstant +client-preface-length+ 24)
+
 (defconstant +goaway-frame-type+ 7
   "When client is done (or after an error) it sends goaway frame, and both client
 and server terminate the connection socket. This is kind of courtesy, and any
@@ -51,23 +60,19 @@ particular stream. Each stream is a 23 bit integer."
 
 (mgl-pax:defsection @server-actions
     (:title "Serving HTTP/2")
+  "This framework is used by all server implementation:"
   (create-server function)
-  (kill-server mgl-pax:restart)
   (do-new-connection generic-function)
+  (kill-server restart))
+
+(mgl-pax:defsection @synchronous
+    (:title "Synchronous implementation")
   (do-new-connection (method () (t t (eql :none))))
   (do-new-connection (method () (t t (eql :thread))))
-
   (do-connection function)
   (*buffer* variable)
   (read-client-preface function)
-  (send-response function)
-  "Each frame starts with a header that contains it size, type, and stream id."
-  (get-frame-size function)
-  (get-stream-id function)
-  (get-frame-type function)
-  (get-frame-flags function)
-  (get-stream-id-if-ends function)
-  (buffer-with-changed-stream function))
+  (send-response function))
 
 (defvar *buffer* nil
   "Preallocated buffer for reading from stream. This is initialized for each
@@ -174,18 +179,20 @@ Terminate if either SSL error occurs, or go-away restart is invoked."
 
 (defgeneric do-new-connection (listening-socket tls dispatch-method)
   (:documentation
-   "Wait on new (possibly tls) connection to the LISTENING-SOCKET and start handling it
+   "This method is implemented for the separate connection types. It waits on
+new (possibly tls) connection to the LISTENING-SOCKET and start handling it
 using DISPATCH-METHOD.
 
-Note that when using HTTP/2 without TLS, most clients have to be instructed to
-use tls - e.g., --http2-prior-knowledge for curl.
+DISPATCH-METHOD can presently be either :NONE, :NONE/HTTP2, :THREAD or
+:ASYNC (w/o TLS only for now), see appropritate methods. Methods can be created
+for new dispatch methods.
 
-This would be extended for new dispatch methods."))
+TLS is either NIL or :TLS. Note that when using HTTP/2 without TLS, most clients have to be instructed to
+use tls - e.g., --http2-prior-knowledge for curl."))
 
 (mgl-pax:define-restart kill-server (&optional value)
-  "When a http2 server is running, terminate it properly.
-
-Create-server returns VALUE in such case. ")
+  "Restart established in CREATE-SERVER that can be invoked to terminate the server
+properly and return VALUE.")
 
 (defun url-from-socket (socket host tls)
   "Return a function that takes one parameter, socket, and call FN on socket port

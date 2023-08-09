@@ -9,6 +9,10 @@
   we allocate array to process it."
 
 (defun ensure-data (socket new-data needed)
+  "Provide NEEDED data octets from both SOCKET-DATA and NEW-DATA.
+
+Streamlined for cases where the data \"fit\" exactly needed amount, and event in
+that case not optimized."
   (let* ((old-data (socket-data socket))
          (new-data-size (length new-data)))
     (cond

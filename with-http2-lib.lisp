@@ -3,7 +3,8 @@
 (mgl-pax:defsection @use-http2-lib
     (:title "Server built using HTTP2 package.")
   "Server implementations so far used the simplified HTTP/2 protocol described
-[above][mini-http2::@http2-protocol]. Now we do the same using [HTTP2][asdf/system:system] to compare the ease of
+[above][mini-http2::@http2-protocol]. Now we do the same using
+[HTTP2][asdf/system:system], still synchronously to compare the ease of
 implementation and speed."
   (do-new-connection (method () (t t (eql :none/http2)))))
 
