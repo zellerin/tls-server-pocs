@@ -16,14 +16,17 @@
        new-data)
       ((and (null old-data) (> new-data-size needed))
        ;; we got more than we asked for
-       (setf (socket-data socket) (make-array  new-data needed))
+       (setf (socket-data socket) (subseq  new-data needed))
        (subseq new-data 0 needed))
       (t (error "Not handled yet: old ~a, needed ~d, got ~d"
                 old-data needed new-data-size)))))
 
 (defun on-connect (socket)
-  (write-socket-data socket *settings-frame*)
-  (write-socket-data socket *ack-frame*))
+  "Send server side initial data.
+
+Yes, sending ACK before we get the settings frame is cheating, but we dont
+really care about the settings."
+  (write-socket-data socket #.(concatenate '(vector (unsigned-byte 8)) *settings-frame* *ack-frame*)))
 
 (defun run-or-set-callback (socket fn)
   "We processed something and we want to run FN next.
