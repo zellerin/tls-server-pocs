@@ -8,19 +8,23 @@
 - fixed data size needed: either we got enough and process, or we got less and
   we allocate array to process it."
 
+(defstruct client-data octets index callback)
+
 (defun ensure-data (socket new-data needed)
   "Provide NEEDED data octets from both SOCKET-DATA and NEW-DATA.
 
 Streamlined for cases where the data \"fit\" exactly needed amount, and event in
 that case not optimized."
-  (let* ((old-data (socket-data socket))
+  (let* ((old-data (client-data-octets (socket-data socket)))
          (new-data-size (length new-data)))
+    (when (>= (length old-data) needed)
+      (cerror "Ok." "This should not happen."))
     (cond
       ((and (null old-data) (= new-data-size needed))
        new-data)
       ((and (null old-data) (> new-data-size needed))
        ;; we got more than we asked for
-       (setf (socket-data socket) (subseq  new-data needed))
+       (setf (client-data-octets (socket-data socket)) (subseq  new-data needed))
        (subseq new-data 0 needed))
       (t (error "Not handled yet: old ~a, needed ~d, got ~d"
                 old-data needed new-data-size)))))
@@ -30,19 +34,23 @@ that case not optimized."
 
 Yes, sending ACK before we get the settings frame is cheating, but we dont
 really care about the settings."
+  (setf (socket-data socket) (make-client-data :callback #'expect-client-preface))
   (write-socket-data socket #.(concatenate '(vector (unsigned-byte 8)) *settings-frame* *ack-frame*)))
+
+(defun callback (socket bytes)
+  (funcall (client-data-callback (socket-data socket)) socket bytes))
 
 (defun run-or-set-callback (socket fn)
   "We processed something and we want to run FN next.
 
 Possibly there are some leftovers in socket-data, so we either process and clear
 them, or wait for new data."
-  (let ((old-data (socket-data socket)))
+  (let ((old-data (client-data-octets (socket-data socket))))
     (cond (old-data
-           (setf (socket-data socket) nil)
+           (setf (client-data-octets (socket-data socket)) nil)
            (funcall fn socket old-data))
           (t
-           (write-socket-data socket (octetize nil) :read-cb fn)))))
+           (setf (client-data-callback (socket-data socket)) fn)))))
 
 (defun async-read-and-ignore-stream (socket frame-size)
   "Read FRAME-SIZE octets from socket, possibly in pieces, and ensure frame header
@@ -58,16 +66,15 @@ Originally, we have some SOCKET-DATA available, they can be read. Then, we might
                ((= length frame-size)
                 (run-or-set-callback socket #'read-frame-header))
                (t
-                (setf (socket-data socket) (subseq data frame-size))
-                (run-or-set-callback socket #'read-frame-header)
-                )))))
+                (setf (client-data-octets (socket-data socket)) (subseq data frame-size))
+                (run-or-set-callback socket #'read-frame-header))))))
     ;; first process existing socket-data and clean it.
     (let ((data nil))
-      (rotatef data (socket-data socket))
+      (rotatef data (client-data-octets (socket-data socket)))
       (cond ((= (length data) frame-size)
              #'read-frame-header)
             ((> (length data) frame-size)
-             (setf (socket-data socket)
+             (setf (client-data-octets (socket-data socket))
                    (subseq data frame-size))
              #'read-frame-header)
             (t
@@ -101,7 +108,6 @@ Originally, we have some SOCKET-DATA available, they can be read. Then, we might
   (let ((data (ensure-data socket new-data +client-preface-length+)))
     (unless (null (mismatch +client-preface-start+ data))
       (error "Bad prefix")))
-  ; just to set callback
   (run-or-set-callback socket #'read-frame-header))
 
 (defun run-uv-server (&key (port 2022))
@@ -124,11 +130,33 @@ usocket package, as otherwise access to the port of server is complicated."
   (start-event-loop
    (lambda ()
      (tcp-server nil nil
-                 #'expect-client-preface
+                 #'callback
                  :connect-cb #'on-connect
                  :event-cb (lambda (err) (format t "--> ~s~%" err))
                  :fd (sb-bsd-sockets:socket-file-descriptor
                       (usocket:socket socket)))))
+  (invoke-restart 'kill-server)   ; there is an outer loop in create-server that
+                                        ; we want to skip
+  )
+
+(defmethod do-new-connection (socket tls (dispatch-method (eql :async)))
+  "Handle new connections using cl-async event loop.
+
+Pros: This version can be run in one thread and process many clients.
+
+Cons: requires a specific C library, and the implementation as-is depends on
+SBCL internal function - we re-use the file descriptor of socket created by
+usocket package, as otherwise access to the port of server is complicated."
+  (let ((ctx (mini-http2::make-http2-tls-context)))
+    (start-event-loop
+     (lambda ()
+       (print (cl-async-ssl:tcp-ssl-server nil nil
+                                           #'callback
+                                           :connect-cb #'on-connect
+                                           :ssl-ctx ctx
+                                           :event-cb (lambda (err) (format t "--> ~s~%" err))
+                                           :fd (sb-bsd-sockets:socket-file-descriptor
+                                                (usocket:socket socket)))))))
   (invoke-restart 'kill-server)   ; there is an outer loop in create-server that
                                         ; we want to skip
   )
