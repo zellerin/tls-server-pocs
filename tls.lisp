@@ -35,20 +35,31 @@
         finally
            (return 1)))
 
-(defun make-http2-tls-context ()
-  "Make TLS context suitable for http2.
+(cl+ssl::define-ssl-function ("SSL_CTX_use_certificate_chain_file" ssl-ctx-use-certificate-chain-file)
+  :int
+  (ctx cl+ssl::ssl-ctx)
+  (filename :string))
 
-Practically, it means:
-- ALPN callback that selects h2 if present,
-- Do not request client certificates
-- Do not allow ssl compression adn renegotiation.
-We should also limit allowed ciphers, but we do not."
+(cl+ssl::define-ssl-function ("SSL_CTX_use_PrivateKey_file" ssl-ctx-use-private-key-file)
+  :int
+  (ctx cl+ssl::ssl-ctx)
+  (filename :string)
+  (type :int))
+
+(defun make-http2-tls-context ()
+  "make tls context suitable for http2.
+
+practically, it means:
+- alpn callback that selects h2 if present,
+- do not request client certificates
+- do not allow ssl compression adn renegotiation.
+we should also limit allowed ciphers, but we do not."
   (let ((context
           (cl+ssl:make-context
-           ;; Implementations of HTTP/2 MUST use TLS
-           ;; version 1.2 [TLS12] or higher for HTTP/2
-           ;; over TLS.
-           :min-proto-version cl+ssl::+TLS1-2-VERSION+
+           ;; implementations of http/2 must use tls
+           ;; version 1.2 [tls12] or higher for http/2
+           ;; over tls.
+           :min-proto-version cl+ssl::+tls1-2-version+
 
            :options (list #x20000       ; +ssl-op-no-compression+
                           cl+ssl::+ssl-op-all+
@@ -59,6 +70,9 @@ We should also limit allowed ciphers, but we do not."
     (ssl-ctx-set-alpn-select-cb
      context
      (cffi:get-callback 'select-h2-callback))
+    (let ((topdir (asdf:component-pathname (asdf:find-system "tls-server"))))
+      (print (ssl-ctx-use-certificate-chain-file context (namestring (merge-pathnames "certs/server.crt" topdir))))
+      (print (ssl-ctx-use-private-key-file context (namestring (merge-pathnames "certs/server.key" topdir)) cl+ssl::+ssl-filetype-pem+)))
     context))
 
 (defvar *http2-tls-context* (make-http2-tls-context))
