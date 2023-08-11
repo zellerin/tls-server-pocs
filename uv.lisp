@@ -90,8 +90,10 @@ Originally, we have some SOCKET-DATA available, they can be read. Then, we might
         (break  "Too big header! go-away"))
       (let ((id-to-process (get-stream-id-if-ends header)))
         (when id-to-process
-          (write-socket-data socket (buffer-with-changed-stream *header-frame* id-to-process))
-          (write-socket-data socket (buffer-with-changed-stream *data-frame* id-to-process))))
+          (cl-async:delay
+           (lambda ()
+             (write-socket-data socket (buffer-with-changed-stream *header-frame* id-to-process))
+             (write-socket-data socket (buffer-with-changed-stream *data-frame* id-to-process))))))
       (run-or-set-callback socket
                            (async-read-and-ignore-stream socket frame-size)))))
 
