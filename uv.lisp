@@ -160,3 +160,31 @@ usocket package, as otherwise access to the port of server is complicated."
   (invoke-restart 'kill-server)   ; there is an outer loop in create-server that
                                         ; we want to skip
   )
+
+(defun ssl-on-connect (socket)
+  (setf (socket-data socket)
+        (tls-server/nonblock-tls:make-client-info 0
+                                                  (mini-http2::make-http2-tls-context)
+                                                  #'callback)))
+
+(defmethod do-new-connection (socket (tls (eql :nonblock)) (dispatch-method (eql :async)))
+  "Handle new connections using cl-async event loop.
+
+Pros: This version can be run in one thread and process many clients.
+
+Cons: requires a specific C library, and the implementation as-is depends on
+SBCL internal function - we re-use the file descriptor of socket created by
+usocket package, as otherwise access to the port of server is complicated."
+  (let ((ctx (mini-http2::make-http2-tls-context)))
+    (start-event-loop
+     (lambda ()
+       (cl-async-ssl:tcp-ssl-server nil nil
+                                    #'callback
+                                    :connect-cb #'on-connect
+                                    :ssl-ctx ctx
+                                    :event-cb (lambda (err) (format t "--> ~s~%" err))
+                                    :fd (sb-bsd-sockets:socket-file-descriptor
+                                         (usocket:socket socket))))))
+  (invoke-restart 'kill-server)   ; there is an outer loop in create-server that
+                                        ; we want to skip
+  )
