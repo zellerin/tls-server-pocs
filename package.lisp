@@ -23,14 +23,17 @@
 (in-package #:mini-http2)
 (mgl-pax:defsection mini-http2::@index
     (:title "Experiments with HTTP/2 server")
+
   "I wanted to play with different options for HTTP/2 server implementations. While
-I have a more correct implementation of HTTP/2, I wanted something
-simple to test different client handling options, as well as speed limits and impact of different choices.
+I have a more correct implementation of HTTP/2, I wanted something simple to
+test different client handling options, as well as speed limits and impact of
+different choices.
 
 So this repository implements:
 
-- very simplified (and indeed incorrect in few ways) but server side of HTTP/2 protocol, and based of that
-- several versions of TCP server that accept and handle the request."
+- very simplified (and indeed incorrect in more than few ways) server side of HTTP/2
+- protocol, and based of that several versions of TCP server that accept and
+- handle the request."
   (mini-http2::@server-actions mgl-pax:section)
   (mini-http2::@synchronous mgl-pax:section)
   (mini-http2::@use-http2-lib mgl-pax:section)

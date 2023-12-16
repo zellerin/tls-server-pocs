@@ -139,7 +139,7 @@ usocket package, as otherwise access to the port of server is complicated."
                                         ; we want to skip
   )
 
-(defmethod do-new-connection (socket tls (dispatch-method (eql :async)))
+(defmethod do-new-connection (socket (tls (eql t)) (dispatch-method (eql :async)))
   "Handle new connections using cl-async event loop.
 
 Pros: This version can be run in one thread and process many clients.
@@ -160,12 +160,6 @@ usocket package, as otherwise access to the port of server is complicated."
   (invoke-restart 'kill-server)   ; there is an outer loop in create-server that
                                         ; we want to skip
   )
-
-(defun ssl-on-connect (socket)
-  (setf (socket-data socket)
-        (tls-server/nonblock-tls:make-client-info 0
-                                                  (mini-http2::make-http2-tls-context)
-                                                  #'callback)))
 
 (defmethod do-new-connection (socket (tls (eql :nonblock)) (dispatch-method (eql :async)))
   "Handle new connections using cl-async event loop.

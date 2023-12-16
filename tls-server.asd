@@ -11,7 +11,7 @@
   :serial t
   :in-order-to ((asdf::test-op (asdf:test-op "tls-server/test")))
   :depends-on ("cl+ssl" "usocket" "bordeaux-threads" "mgl-pax" "puri" "http2"
-                        "cl-async")
+                        "cl-async-ssl")
   :components ((:file "package")
                (:file "utils")
                (:file "http2")

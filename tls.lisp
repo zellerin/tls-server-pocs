@@ -1,7 +1,6 @@
 (in-package #:mini-http2)
 
-(mgl-pax:defsection @tls ()
-  (wrap-to-tls function))
+(mgl-pax:defsection @tls () (wrap-to-tls function))
 
 (cl+ssl::define-ssl-function ("SSL_CTX_set_alpn_select_cb" ssl-ctx-set-alpn-select-cb)
   :void
