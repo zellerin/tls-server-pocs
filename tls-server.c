@@ -413,11 +413,10 @@ void ssl_init() {
   SSL_CTX_set_options(ctx, SSL_OP_ALL|SSL_OP_NO_SSLv2|SSL_OP_NO_SSLv3);
 }
 
-extern int serve(int servfd)
+extern int serve(int clientfd)
 {
   char str[INET_ADDRSTRLEN];
 
-  int clientfd;
   struct sockaddr_in peeraddr;
   socklen_t peeraddr_len = sizeof(peeraddr);
 
@@ -429,40 +428,31 @@ extern int serve(int servfd)
 
   ssl_init();
 
-  while (1) {
+  ssl_client_init(&client);
+  client.fd = clientfd;
 
-    clientfd = accept(servfd, (struct sockaddr *)&peeraddr, &peeraddr_len);
-    if (clientfd < 0)
-      return -3;
+  fdset[1].fd = clientfd;
 
-    ssl_client_init(&client);
-    client.fd = clientfd;
+  /* event loop */
 
-    inet_ntop(peeraddr.sin_family, &peeraddr.sin_addr, str, INET_ADDRSTRLEN);
-    printf("new connection from %s:%d\n", str, ntohs(peeraddr.sin_port));
-
-    fdset[1].fd = clientfd;
-
-    /* event loop */
-
-    fdset[1].events = POLLERR | POLLHUP | POLLNVAL | POLLIN;
+  fdset[1].events = POLLERR | POLLHUP | POLLNVAL | POLLIN;
 #ifdef POLLRDHUP
-    fdset[1].events |= POLLRDHUP;
+  fdset[1].events |= POLLRDHUP;
 #endif
 
-    while (1) {
-      fdset[1].events &= ~POLLOUT;
-      fdset[1].events |= (ssl_client_want_write(&client)? POLLOUT : 0);
+  while (1) {
+    fdset[1].events &= ~POLLOUT;
+    fdset[1].events |= (ssl_client_want_write(&client)? POLLOUT : 0);
 
-      int nready = poll(&fdset[0], 2, -1);
+    int nready = poll(&fdset[0], 2, -1);
 
-      if (nready == 0)
-        continue; /* no fd ready */
+    if (nready == 0)
+      continue; /* no fd ready */
 
-      int revents = fdset[1].revents;
-      if (revents & POLLIN)
-        if (do_sock_read() == -1)
-          break;
+    int revents = fdset[1].revents;
+    if (revents & POLLIN)
+      if (do_sock_read() == -1)
+        break;
       if (revents & POLLOUT)
         if (do_sock_write() == -1)
           break;
@@ -479,11 +469,9 @@ extern int serve(int servfd)
 
       if (client.encrypt_len>0)
         do_encrypt();
-    }
+  }
 
     close(fdset[1].fd);
     ssl_client_cleanup(&client);
-  }
-
   return 0;
 }

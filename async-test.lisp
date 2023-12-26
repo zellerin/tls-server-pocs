@@ -11,5 +11,8 @@
                                                   :reuse-address t
                                                   :element-type '(unsigned-byte 8))
 #+nil    (funcall announce-url-callback (url-from-socket listening-socket host tls))
-    (serve (sb-bsd-sockets:socket-file-descriptor
-            (usocket:socket listening-socket)))))
+    (loop
+      (usocket:with-connected-socket (plain (usocket:socket-accept listening-socket
+                                                                   :element-type '(unsigned-byte 8)))
+        (serve (sb-bsd-sockets:socket-file-descriptor
+                (usocket:socket plain)))))))
