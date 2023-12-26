@@ -373,7 +373,7 @@ int do_sock_write()
     return -1;
 }
 
-void ssl_init() {
+extern void ssl_init() {
   printf("initialising SSL\n");
 
   /* SSL library initialisation */
@@ -425,8 +425,6 @@ extern int serve(int clientfd)
 
   fdset[0].fd = STDIN_FILENO;
   fdset[0].events = POLLIN;
-
-  ssl_init();
 
   ssl_client_init(&client);
   client.fd = clientfd;
