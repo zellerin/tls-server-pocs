@@ -413,30 +413,9 @@ void ssl_init() {
   SSL_CTX_set_options(ctx, SSL_OP_ALL|SSL_OP_NO_SSLv2|SSL_OP_NO_SSLv3);
 }
 
-extern int serve(int port, )
+extern int serve(int servfd)
 {
   char str[INET_ADDRSTRLEN];
-
-  int servfd = socket(AF_INET, SOCK_STREAM, 0);
-  if (servfd < 0)
-    return 0;
-
-  int enable = 1;
-  if (setsockopt(servfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable)) < 0)
-    die("setsockopt(SO_REUSEADDR)");
-
-  /* Specify socket address */
-  struct sockaddr_in servaddr;
-  memset(&servaddr, 0, sizeof(servaddr));
-  servaddr.sin_family = AF_INET;
-  servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
-  servaddr.sin_port = htons(port);
-
-  if (bind(servfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) < 0)
-    return -1;
-
-  if (listen(servfd, 128) < 0)
-    return -2;
 
   int clientfd;
   struct sockaddr_in peeraddr;
@@ -451,7 +430,6 @@ extern int serve(int port, )
   ssl_init();
 
   while (1) {
-    printf("waiting for next connection on port %d\n", port);
 
     clientfd = accept(servfd, (struct sockaddr *)&peeraddr, &peeraddr_len);
     if (clientfd < 0)
