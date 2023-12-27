@@ -379,9 +379,6 @@ extern void ssl_init() {
   /* SSL library initialisation */
   SSL_library_init();
   OpenSSL_add_all_algorithms();
-  SSL_load_error_strings();
-  ERR_load_BIO_strings();
-  ERR_load_crypto_strings();
 
   /* create the SSL server context */
   ctx = SSL_CTX_new(SSLv23_server_method());
@@ -413,36 +410,25 @@ extern void ssl_init() {
   SSL_CTX_set_options(ctx, SSL_OP_ALL|SSL_OP_NO_SSLv2|SSL_OP_NO_SSLv3);
 }
 
-extern int serve(int clientfd)
+extern int serve(struct pollfd *fdset, int clientfd)
 {
-  char str[INET_ADDRSTRLEN];
-
-  struct sockaddr_in peeraddr;
-  socklen_t peeraddr_len = sizeof(peeraddr);
-
-  struct pollfd fdset[2];
-  memset(&fdset, 0, sizeof(fdset));
-
-  fdset[0].fd = STDIN_FILENO;
-  fdset[0].events = POLLIN;
+  //  struct pollfd fdset[2];
+  //  memset(fdset, 0, 16);
 
   ssl_client_init(&client);
   client.fd = clientfd;
 
-  fdset[1].fd = clientfd;
-
   /* event loop */
 
-  fdset[1].events = POLLERR | POLLHUP | POLLNVAL | POLLIN;
-#ifdef POLLRDHUP
-  fdset[1].events |= POLLRDHUP;
-#endif
+  //#ifdef POLLRDHUP
+  //fdset[1].events |= POLLRDHUP;
+  //#endif
 
   while (1) {
     fdset[1].events &= ~POLLOUT;
     fdset[1].events |= (ssl_client_want_write(&client)? POLLOUT : 0);
 
-    int nready = poll(&fdset[0], 2, -1);
+    int nready = poll(fdset, 2, -1);
 
     if (nready == 0)
       continue; /* no fd ready */
