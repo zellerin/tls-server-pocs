@@ -1,21 +1,24 @@
-(in-package mini-http2)
+(in-package :mini-http2)
 
 (mgl-pax:defsection @http2-protocol (:title "HTTP/2 protocol.")
   "Simplified - and incorrect in many corner cases - HTTP/2 protocol implemented
 here is is as follows. This should be sufficient to respond to a browser, curl
 or h2load."
   (+client-preface-start+ variable)
+  (read-client-preface function)
   (*settings-frame* variable)
   (*ack-frame* variable)
   (stream-id type)
   (*data-frame* variable)
   (+goaway-frame-type+ variable)
   (get-frame-size function)
+  (get-stream function)
   (get-stream-id function)
   (get-frame-type function)
   (get-frame-flags function)
   (get-stream-id-if-ends function)
-  (buffer-with-changed-stream function))
+  (buffer-with-changed-stream function)
+  (send-response function))
 
 (defvar +client-preface-start+
   #(80 82 73 32 42 32 72 84 84 80 47 50 46 48 13 10 13 10 83 77 13 10 13 10)
@@ -65,6 +68,8 @@ server types implement appropriate methods to ensure desired behaviour."
   (create-server function)
   (do-new-connection generic-function)
   (kill-server restart)
+  (kill-server function)
+  (callback-on-server function)
   (url-from-socket function))
 
 (defun create-server (port tls dispatch-method
@@ -91,15 +96,6 @@ DISPATCH-METHOD as parameters."
         (loop
           (do-new-connection listening-socket tls dispatch-method)))
     (kill-server (&optional value) :report "Kill server" value)))
-
-(mgl-pax:defsection @synchronous
-    (:title "Synchronous implementation")
-  (do-new-connection (method () (t t (eql :none))))
-  (do-new-connection (method () (t t (eql :thread))))
-  (do-connection function)
-  (*buffer* variable)
-  (read-client-preface function)
-  (send-response function))
 
 (defvar *buffer* nil
   "Preallocated buffer for reading from stream. This is initialized for each
@@ -150,52 +146,10 @@ connection depending on the dispatch method.")
     (get-stream-id header)))
 
 (defun send-response (stream stream-id)
-  "Write response to the request with STREAM-ID."
+  "Write response to the request with STREAM-ID to Common Lisp output STREAM."
   (write-sequence (buffer-with-changed-stream *header-frame* stream-id) stream)
   (write-sequence (buffer-with-changed-stream *data-frame* stream-id) stream)
   (force-output stream))
-
-(defun read-frame-check-end-stream (stream)
-  (let ((header (fully-read-array stream *buffer* 9)))
-    (declare (octet-vector header))
-    (let* ((frame-size (get-frame-size header))
-           (type (get-frame-type header)))
-      (declare (frame-size frame-size))
-      (when (= type +goaway-frame-type+)
-        (invoke-restart 'go-away))
-      (unless (>= 16384 frame-size)
-        (close stream)
-        (error "Too big frame (~d)" frame-size))
-      (prog1
-          (get-stream-id-if-ends header)
-        (fully-read-array stream *buffer* frame-size)))))
-
-(defun do-connection (stream)
-  "Process a HTTP2 connection naively: handle preface, and read frames till there
-  is end of stream; write static response in that case.
-
-Terminate if either SSL error occurs, or go-away restart is invoked."
-  (restart-case
-      (handler-case
-          (let ((*buffer*  (make-array 16385
-                                       :element-type '(unsigned-byte 8)
-                                       :initial-element 0)))
-            (read-client-preface stream)
-            (write-sequence *settings-frame* stream)
-            (write-sequence *ack-frame* stream)
-            (loop
-              for stream-to-send-response = (read-frame-check-end-stream stream)
-              when stream-to-send-response
-                do
-                   (send-response stream stream-to-send-response)))
-        (cl+ssl::ssl-error (e)
-          ;; ended by ssl error
-          (unless (member (type-of e) '(cl+ssl::ssl-error-syscall))
-            (describe e)))
-        (stream-error (e)
-          (unless (member (type-of e) '(sb-int:broken-pipe))
-            (describe e))))
-    (go-away ())))
 
 (defgeneric get-stream (socket tls)
   (:documentation "Return either plain (if tls is nil) or TLS (if :tls) stream build upon SOCKET")
@@ -214,14 +168,37 @@ DISPATCH-METHOD can presently be either :NONE, :NONE/HTTP2, :THREAD or
 :ASYNC (w/o TLS only for now), see appropritate methods. Methods can be created
 for new dispatch methods.
 
-
-
 TLS is either NIL or :TLS. Note that when using HTTP/2 without TLS, most clients have to be instructed to
 use tls - e.g., --http2-prior-knowledge for curl."))
 
 (mgl-pax:define-restart kill-server (&optional value)
   "Restart established in CREATE-SERVER that can be invoked to terminate the server
 properly and return VALUE.")
+
+(mgl-pax:define-restart go-away (&optional value)
+  "Restart established in CREATE-SERVER that can be invoked to terminate the server
+properly and return VALUE.")
+
+(defun kill-server (&optional res)
+  "Kill server by invoking KILL-SERVER restart, if it exists."
+  (let ((restart
+          (find-restart 'kill-server)))
+    (if restart
+        (invoke-restart restart res))))
+
+(defun callback-on-server (fn &key (thread-name "Test client for a server"))
+  "Return a function that takes one parameter, URL, as a parameter and calls FN on
+it in a separate thread. Then it kills the server by invoking KILL-SERVER restart.
+
+This is to be used as callback on an open server for testing it."
+  (lambda (url)
+    (let ((parent (bt:current-thread)))
+      (bt:make-thread
+       (lambda ()
+         (bt:interrupt-thread parent #'kill-server
+                              (with-simple-restart (kill-parent "Kill parent")
+                                (funcall fn url))))
+       :name thread-name))))
 
 (defun url-from-socket (socket host tls)
   "Return URL that combines HOST with the port of the SOCKET.

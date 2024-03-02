@@ -16,19 +16,23 @@
                (:file "utils")
                (:file "http2")
                (:file "tls")
-               (:file "single")
+               (:file "synchronous")
                (:file "with-http2-lib")
                (:file "uv")))
 
 (defsystem #:tls-server/test
   :depends-on ("tls-server" "fiasco" "cl-ppcre" "puri" "http2/client")
   :perform (asdf:test-op (o s)
-                    (symbol-call :fiasco '#:run-package-tests :package '#:tls-server/tests
-                                 :verbose t)
+                         (progn
+                           (symbol-call :fiasco '#:run-package-tests :package '#:mini-http2/tests
+                                        :verbose t)
+                           (symbol-call :fiasco '#:run-package-tests :package '#:tls-server/tests
+                                        :verbose t))
   :serial t)
   :license  "MIT"
   :pathname "tests"
   :components ((:file "package")
                (:file "utils")
                (:file "timing")
-               (:file "client")))
+               (:file "client")
+               (:file "http2")))

@@ -136,8 +136,6 @@ void print_unencrypted_data(char *buf, size_t len) {
 }
 
 /* Global SSL context */
-SSL_CTX *ctx;
-
 /* An instance of this object is created each time a client connection is
  * accepted. It stores the client file descriptor, the SSL objects, and data
  * which is waiting to be either written to socket or encrypted. */
@@ -171,7 +169,7 @@ void ssl_client_init(struct ssl_client *p)
   p->rbio = BIO_new(BIO_s_mem());
   p->wbio = BIO_new(BIO_s_mem());
 
-  p->ssl = SSL_new(ctx);
+  //  p->ssl = SSL_new(ctx);
 
   SSL_set_accept_state(p->ssl); /* sets ssl to work in server mode. */
   SSL_set_bio(p->ssl, p->rbio, p->wbio);
@@ -373,7 +371,8 @@ int do_sock_write()
     return -1;
 }
 
-extern void ssl_init() {
+extern SSL_CTX* make_ssl_context() {
+  SSL_CTX *ctx;
   printf("initialising SSL\n");
 
   /* SSL library initialisation */
@@ -408,6 +407,7 @@ extern void ssl_init() {
 
   /* Recommended to avoid SSLv2 & SSLv3 */
   SSL_CTX_set_options(ctx, SSL_OP_ALL|SSL_OP_NO_SSLv2|SSL_OP_NO_SSLv3);
+  return ctx;
 }
 
 extern int serve(struct pollfd *fdset, int clientfd)
@@ -415,8 +415,8 @@ extern int serve(struct pollfd *fdset, int clientfd)
   //  struct pollfd fdset[2];
   //  memset(fdset, 0, 16);
 
-  ssl_client_init(&client);
-  client.fd = clientfd;
+  //  ssl_client_init(&client);
+  //  client.fd = clientfd;
 
   /* event loop */
 
@@ -437,11 +437,11 @@ extern int serve(struct pollfd *fdset, int clientfd)
     if (revents & POLLIN)
       if (do_sock_read() == -1)
         break;
-      if (revents & POLLOUT)
-        if (do_sock_write() == -1)
-          break;
-      if (revents & (POLLERR | POLLHUP | POLLNVAL))
+    if (revents & POLLOUT)
+      if (do_sock_write() == -1)
         break;
+    if (revents & (POLLERR | POLLHUP | POLLNVAL))
+      break;
 
 #ifdef POLLRDHUP
       if (revents & POLLRDHUP)

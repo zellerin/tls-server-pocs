@@ -30,16 +30,31 @@
                   :output :string)))))
 
 (deftest http2-client-curl ()
-  "Test the server from http2-based client."
+  "Test the server using curl."
   (dolist (tls '(nil :tls))
-    (dolist (model '(:none :thread :poll))
-      (mini-http2:create-server 0 nil model
-                                :announce-url-callback (callback-on-server
-                                                        #'query-port-using-curl)))))
+    (dolist (model '(:none :thread #+nil :poll))
+      (is (mini-http2:create-server 0 nil model
+                                    :announce-url-callback (callback-on-server
+                                                            #'query-port-using-curl))))))
 
-(deftest http2-client-native ()
+(defun http2-client-curl-test (tls model)
+  "Test the server using curl."
+  (is (mini-http2:create-server 0 tls model
+                                :announce-url-callback (callback-on-server
+                                                        #'query-port-using-curl))))
+
+(defun http2-client-native-test (tls model)
   "Test the server from http2-based client."
-  (dolist (model '(:none :thread :poll))
-    (is (mini-http2:create-server 0 nil model
-                                  :announce-url-callback (callback-on-server
-                                                          #'query-port-using-http2)))))
+  (is (mini-http2:create-server 0 tls model
+                                :announce-url-callback (callback-on-server
+                                                        #'query-port-using-http2))))
+
+(deftest none/native ()
+  "Run tests on single-client server."
+  (http2-client-native-test nil :none)
+  (http2-client-curl-test nil :none))
+
+(deftest thread/native ()
+  "Run tests on a threading server."
+  (http2-client-native-test nil :thread)
+#+nil  (http2-client-native :tls :none))

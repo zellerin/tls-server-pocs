@@ -29,6 +29,7 @@ EOF, and we rely on that; if this happens, invoke GO-AWAY restart."
   (make-array (length array) :element-type '(unsigned-byte 8)
                              :initial-contents array))
 
+
 (mgl-pax:defsection @tracing ()
   "SBCL allows trace to call an arbitraty function. We use this to store traces to
 an array that can be analysed later."
@@ -76,7 +77,3 @@ an array that can be analysed later."
               *log-events*))
        (untrace ,@fns))
      *log-events*))
-
-(defun make-doc ()
-  (mgl-pax:update-asdf-system-html-docs mini-http2::@http2-server-pocs "tls-server")
-  (mgl-pax:update-asdf-system-readmes mini-http2::@http2-server-pocs "tls-server"))

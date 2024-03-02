@@ -180,7 +180,7 @@ will be queued for later socket write."
               when (zerop n)
                 do (return 0)))))
 
-(defun do-sock-read (socket data)
+(defun do-sock-read (socket buf)
   (let ((buf (make-array 64 :element-type '(unsigned-byte 8))))
     (cffi:with-pointer-to-vector-data (ptr  buf)
       (let ((n (native-read (client-info-fd info) ptr 64)))
@@ -188,13 +188,9 @@ will be queued for later socket write."
             (on-read-cb info buf n)
             (error "err 3"))))))
 
-(defun do-sock-read* (info)
-  (let ((buf (make-array 64 :element-type '(unsigned-byte 8))))
-    (cffi:with-pointer-to-vector-data (ptr  buf)
-      (let ((n (native-read (client-info-fd info) ptr 64)))
-        (if (plusp n)
-            (on-read-cb info buf n)
-            (error "err 3"))))))
+(defun do-sock-read* (info buf)
+        (on-read-cb info buf)
+  )
 
 (defun send-octets (info octets)
   (send-unencrypted-bytes info octets (length octets)))
