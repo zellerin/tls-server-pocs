@@ -2,6 +2,8 @@
 
 (defun query-port-using-http2 (url)
   "Query a port using a client build upon http2 package."
+  (unless (eql (puri:uri-scheme url) :http)
+    (error "Only HTTP supported."))
   (let (res)
     (with-simple-restart (kill-client "Kill client")
       (with-client-socket
@@ -52,9 +54,10 @@
 (deftest none/native ()
   "Run tests on single-client server."
   (http2-client-native-test nil :none)
-  (http2-client-curl-test nil :none))
+  (http2-client-curl-test nil :none)
+  (http2-client-curl-test :tls :none))
 
 (deftest thread/native ()
   "Run tests on a threading server."
   (http2-client-native-test nil :thread)
-#+nil  (http2-client-native :tls :none))
+  (http2-client-curl-test :tls :none))

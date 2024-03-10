@@ -41,6 +41,7 @@ So this repository implements:
 - protocol, and based of that several versions of TCP server that accept and
 - handle the request."
   (mini-http2::@server-actions mgl-pax:section)
+  (mini-http2::@tls mgl-pax:section)
   (tls-server/synchronous::@synchronous mgl-pax:section)
   (mini-http2::@use-http2-lib mgl-pax:section)
   (tls-server/async::@async  mgl-pax:section)

@@ -1,6 +1,13 @@
-(in-package #:mini-http2)
+(in-package :mini-http2)
 
-(mgl-pax:defsection @tls () (wrap-to-tls function))
+(mgl-pax:defsection @tls (:title "TLS")
+  "HTTP/2 is deeply connected with \\TLS. This interaction is represented with
+function WRAP-TO-TLS"
+  (wrap-to-tls function)
+  (*http2-tls-context* variable)
+  (make-http2-tls-context function)
+                                        ; Note & TODO: no object for cffi callbacks
+  #+nil(select-h2-callback function))
 
 (cl+ssl::define-ssl-function ("SSL_CTX_set_alpn_select_cb" ssl-ctx-set-alpn-select-cb)
   :void
@@ -46,10 +53,11 @@
   (type :int))
 
 (defun make-http2-tls-context ()
-  "make tls context suitable for http2.
+  "make a \\TLS context suitable for http2.
 
 practically, it means:
-- alpn callback that selects h2 if present,
+
+- ALPN callback that selects h2 if present,
 - do not request client certificates
 - do not allow ssl compression adn renegotiation.
 we should also limit allowed ciphers, but we do not."
@@ -63,9 +71,9 @@ we should also limit allowed ciphers, but we do not."
            :options (list #x20000       ; +ssl-op-no-compression+
                           cl+ssl::+ssl-op-all+
                           #x40000000)   ; no renegotiation
-           ;; do not requiest client cert
+           ;; do not request client cert
            :verify-mode cl+ssl:+ssl-verify-none+)))
-                                        ;    (cl+ssl::ssl-ctx-ctrl context +ssl-ctrl-set-read-ahead+ 0 (cffi:null-pointer))
+    ;; (cl+ssl::ssl-ctx-ctrl context +ssl-ctrl-set-read-ahead+ 0 (cffi:null-pointer))
     (ssl-ctx-set-alpn-select-cb
      context
      (cffi:get-callback 'select-h2-callback))
@@ -77,9 +85,11 @@ we should also limit allowed ciphers, but we do not."
 (defvar *http2-tls-context* (make-http2-tls-context))
 
 (defun wrap-to-tls (raw-stream)
-  "Establish server TLS connection over RAW-STREAM.
+  "Return a binary stream representing TLS server connection over RAW-STREAM.
 
-Use TLS KEY and CERT for server identity."
+Use TLS KEY and CERT for server identity, and *HTTP2-TLS-CONTEXT* for the contex.
+
+This is a simple wrapper over CL+SSL."
   (cl+ssl:with-global-context (*http2-tls-context* :auto-free-p nil)
     (let* ((topdir (asdf:component-pathname (asdf:find-system "tls-server")))
            (tls-stream
