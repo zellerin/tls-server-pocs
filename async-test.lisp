@@ -2,46 +2,64 @@
 (require 'usocket)
 (require 'cffi-grovel)
 
-(mgl-pax:define-package #:tls-test/async
-  (:use #:cl #:mini-http2 #:cffi))
+(in-package #:tls-test/async/tls)
 
-(in-package #:tls-test/async)
+(defcfun "BIO_s_mem" :pointer)
+(defcfun "BIO_new" :pointer (bio-method :pointer))
 
-(cffi:define-foreign-library myssl
-  (:unix "/home/zellerin/projects/tls-server/ssl_server.so"))
+(defcfun "BIO_write" :int (bio-method :pointer) (data :pointer) (dlen :int))
+(defcfun "BIO_read" :int (bio-method :pointer) (data :pointer) (dlen :int))
 
-(cffi:use-foreign-library myssl)
-
-(load (cffi-grovel:process-grovel-file "/home/zellerin/projects/tls-server/async-grovel.lisp" "/tmp/foo.lisp"))
-
-(cffi:defcfun "serve" :int (fdset (:pointer (:struct pollfd))) (port :int))
-
-(cffi:defcfun "BIO_s_mem" :pointer)
-(cffi:defcfun "BIO_new" :pointer (bio-method :pointer))
-
-(cffi:defcfun "BIO_write" :int (bio-method :pointer) (data :pointer) (dlen :int))
-(cffi:defcfun "BIO_read" :int (bio-method :pointer) (data :pointer) (dlen :int))
-
-(cffi:defcfun "BIO_should_retry" :int (bio-method :pointer))
+(defcfun "BIO_should_retry" :int (bio-method :pointer))
 
 
-(cffi:defcfun "SSL_new" :pointer (bio-method :pointer))
-(cffi:defcfun "SSL_read" :int (ssl :pointer) (buffer :pointer) (bufsize :int))
-(cffi:defcfun "SSL_get_error" :int (ssl :pointer) (ret :int))
-(cffi:defcfun "SSL_is_init_finished" :int (ssl :pointer))
+(defcfun "SSL_new" :pointer (bio-method :pointer))
+(defcfun "SSL_read" :int (ssl :pointer) (buffer :pointer) (bufsize :int))
+(defcfun "SSL_get_error" :int (ssl :pointer) (ret :int))
+(defcfun "SSL_is_init_finished" :int (ssl :pointer))
+(defcfun "OpenSSL_add_all_algorithms" :void) ; FIXME: obsolete
+(defcfun "SSL_CTX_new" :pointer (method :pointer))
+(defcfun "TLS_method" :pointer)
+(defcfun "SSL_CTX_use_certificate_file" :int (ctx :pointer) (path :pointer) (type :int))
+(defcfun "SSL_CTX_use_PrivateKey_file" :int (ctx :pointer) (path :pointer) (type :int))
+(defcfun "SSL_CTX_check_private_key" :int (ctx :pointer))
 
-(cffi:defcfun "make_ssl_context" :pointer)
+(defcfun "SSL_set_accept_state" :pointer (ssl :pointer))
+(defcfun "SSL_library_init" :int)
+(defcfun "SSL_accept" :int (ssl :pointer))
+(defcfun "SSL_set_bio" :pointer (ssl :pointer) (rbio :pointer) (wbio :pointer))
+(defcfun "SSL_CTX_set_options" :int (ctx :pointer) (options :int))
+(defcfun "SSL_CTX_set_min_proto_version" :int (ctx :pointer) (options :int))
 
-(cffi:defcfun "SSL_set_accept_state" :pointer (ssl :pointer))
-(cffi:defcfun "SSL_accept" :int (ssl :pointer))
-(cffi:defcfun "SSL_set_bio" :pointer (ssl :pointer) (rbio :pointer) (wbio :pointer))
-
-(cffi:defcfun "poll" :int (fdset :pointer) (rb :int) (timeout :int))
-(cffi:defcfun ("read" read-2) :int (fd :int) (buf :pointer) (size :int))
-(cffi:defcfun ("write" write-2) :int (fd :int) (buf :pointer) (size :int))
+(defcfun "poll" :int (fdset :pointer) (rb :int) (timeout :int))
+(defcfun ("read" read-2) :int (fd :int) (buf :pointer) (size :int))
+(defcfun ("write" write-2) :int (fd :int) (buf :pointer) (size :int))
 
 
 (defstruct client fd ssl rbio wbio write-buf encrypt-buf io-on-read)
+
+(defun make-ssl-context ()
+  (ssl-library-init)
+  (openssl-add-all-algorithms)
+  (let ((context (ssl-ctx-new (tls-method))))
+    (when (null-pointer-p context )
+      (error "Could not create context"))
+    (unless (= 1 (ssl-ctx-use-certificate-file
+                  context
+                  "/home/zellerin/projects/tls-server/certs/server.key"
+                  ssl-filetype-pem))
+      (error "failed to load server private key"))
+    (unless (= 1 (ssl-ctx-use-privatekey-file
+                  context
+                  "/home/zellerin/projects/tls-server/certs/server.cert"
+                  ssl-filetype-pem))
+      (error "failed to load server certificate"))
+
+    (unless (= 1 (ssl-ctx-check-private-key context))
+      (error "server private/public key mismatch"))
+    (ssl-ctx-set-options context ssl-op-all)
+    (ssl-ctx-set-min-proto-version context tls-1.2-version)
+    context))
 
 (defun print-unencrypted-data (data)
   (break "~a" data))

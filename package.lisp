@@ -24,7 +24,8 @@
   (:import-from #:cl-async #:socket-data #:write-socket-data #:close-socket
                 #:start-event-loop #:tcp-server))
 
-
+(mgl-pax:define-package #:tls-test/async/tls
+  (:use #:cl #:mini-http2 #:cffi))
 
 (in-package #:mini-http2)
 (mgl-pax:defsection mini-http2::@index
