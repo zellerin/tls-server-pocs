@@ -19,3 +19,5 @@
 (constant (ssl-filetype-pem "SSL_FILETYPE_PEM"))
 (constant (tls-1.2-version "TLS1_2_VERSION"))
 (constant (ssl-op-all "SSL_OP_ALL"))
+
+(constant (ssl-ctrl-set-min-proto-version "SSL_CTRL_SET_MIN_PROTO_VERSION"))
