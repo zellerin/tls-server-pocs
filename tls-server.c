@@ -386,14 +386,14 @@ extern SSL_CTX* make_ssl_context() {
 
   /* Load certificate and private key files, and check consistency  */
   int err;
-  err = SSL_CTX_use_certificate_file(ctx, "server.crt",  SSL_FILETYPE_PEM);
+  err = SSL_CTX_use_certificate_file(ctx, "/home/zellerin/projects/tls-server/certs/server.crt",  SSL_FILETYPE_PEM);
   if (err != 1)
     int_error("SSL_CTX_use_certificate_file failed");
   else
     printf("certificate file loaded ok\n");
 
   /* Indicate the key file to be used */
-  err = SSL_CTX_use_PrivateKey_file(ctx, "server.key", SSL_FILETYPE_PEM);
+  err = SSL_CTX_use_PrivateKey_file(ctx, "/home/zellerin/projects/tls-server/certs/server.key", SSL_FILETYPE_PEM);
   if (err != 1)
     int_error("SSL_CTX_use_PrivateKey_file failed");
   else
