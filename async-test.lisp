@@ -187,13 +187,6 @@ The FD-PTR points to the field of the client; we use only revents of it."
 (defun do-terminal-read (fd)
   (break "Terminal read: ~a" fd))
 
-(defun process-fd-0 (fd-ptr)
-  (cffi:with-foreign-slots ((fd events revents) fd-ptr (:struct pollfd))
-    (if (plusp (logand c-pollin revents))
-        (do-terminal-read fd-ptr))
-    (if (plusp (logand revents  (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
-        (error 'done))))
-
 (defun serve-tls (&optional (host "0.0.0.0") (port 8443))
   (usocket:with-socket-listener (listening-socket host port
                                                   :reuse-address t
@@ -233,7 +226,6 @@ The FD-PTR points to the field of the client; we use only revents of it."
                 (let ((nread (poll fdset 2 -1)))
                   (unless (zerop nread)
                     (process-fd-1 (cffi:inc-pointer fdset size-of-pollfd) client)
-                    (process-fd-0 fdset)
                     (do-encrypt client)))))))))))
 
 ;;;; HTTP2 TLS async client
