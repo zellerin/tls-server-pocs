@@ -8,6 +8,7 @@
 (use-foreign-library openssl)
 
 (defcfun "BIO_new" :pointer (bio-method :pointer))
+(defcfun "BIO_free" :pointer (bio :pointer))
 (defcfun "BIO_read" :int (bio-method :pointer) (data :pointer) (dlen :int))
 (defcfun "BIO_s_mem" :pointer)
 (defcfun "BIO_test_flags" :int (bio :pointer) (what :int))
@@ -21,15 +22,17 @@
 (defcfun "SSL_CTX_use_certificate_file" :int (ctx :pointer) (path :string) (type :int))
 (defcfun "SSL_accept" :int (ssl :pointer))
 (defcfun "SSL_get_error" :int (ssl :pointer) (ret :int))
+(defcfun "SSL_free" :int (ssl :pointer))
 (defcfun "SSL_is_init_finished" :int (ssl :pointer))
 (defcfun "SSL_new" :pointer (bio-method :pointer))
 (defcfun "SSL_read" :int (ssl :pointer) (buffer :pointer) (bufsize :int))
 (defcfun "SSL_set_accept_state" :pointer (ssl :pointer))
-(defcfun "SSL_set_bio" :pointer (ssl :pointer) (rbio :pointer) (wbio :pointer))
+(defcfun "SSL_set_bio" :void (ssl :pointer) (rbio :pointer) (wbio :pointer))
 (defcfun "SSL_write" :int (ssl :pointer) (buffer :pointer) (bufsize :int))
 (defcfun "TLS_method" :pointer)
 
 (defcfun "poll" :int (fdset :pointer) (rb :int) (timeout :int))
+(defcfun ("close" close-fd) :int (fd :int))
 (defcfun ("read" read-2) :int (fd :int) (buf :pointer) (size :int))
 (defcfun ("write" write-2) :int (fd :int) (buf :pointer) (size :int))
 
@@ -47,7 +50,7 @@
 - Unencrypted octets to encrypt and send (WRITE-BUF),
 - Encrypted octets to send to the file descriptor (ENCRYPT-BUF),
 - Callback function when read data are available (IO-ON-READ)."
-  fd ssl rbio wbio write-buf encrypt-buf io-on-read)
+  fd ssl rbio wbio write-buf encrypt-buf io-on-read fdset-idx)
 
 (defun make-ssl-context ()
   "Make a SSL context.
@@ -167,7 +170,7 @@ Otherwise, use a temporary vector to write data "
             do
                (cond
                  ((= len written)
-                  (move-encrypted-bytes (client-wbio client) read-buffer client read-vector)
+                  (move-encrypted-bytes (client-wbio client)  client read-buffer read-vector)
                   (return nil))
                  ((plusp written)
                   (incf all-written written)
@@ -189,14 +192,12 @@ Otherwise, use a temporary vector to write data "
 
 Fed them into the SSL object to be unencrypted, and let the client callback
 handle "
-
-  ;; TODO: rewrite from C-in-Lisp to Lisp
   (loop for written = (bio-write (client-rbio client) buffer size)
         when (minusp written) do (error "Bio-write failed")
           do
              (decf size written)
              (setf buffer (inc-pointer buffer written))
-        #+probably-never-used (maybe-init-ssl client)
+             (maybe-init-ssl client)
              (funcall (client-io-on-read client) client)
              (do-io-if-wanted client written)
         when (zerop size)
@@ -214,7 +215,7 @@ handle "
     (let ((read (read-2 (client-fd client) buffer *default-buffer-size*)))
       (if (plusp read)
           (decrypt-socket-octets client buffer read)
-          (error 'done)))))
+          (signal 'done)))))
 
 (defun concatenate* (vectors)
   (let* ((len (reduce #'+ vectors :key #'length))
@@ -250,61 +251,102 @@ Read if you can, write if you can, announce DONE when done."
     (if (plusp (logand c-pollout revents))
         (do-sock-write client))
     (if (plusp (logand revents  (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
-        (error 'done))))
+        (signal 'done))))
+
+(defvar *fdset-size* 10)
+(defvar *empty-fdset-items* (loop for i from 0 to (1- *fdset-size*) collect i))
+
+(defun make-client-object (socket ctx s-mem)
+  "Make a new CLIENT object"
+  (let* ((client (make-client :fd socket
+                              :rbio (bio-new s-mem)
+                              :wbio (bio-new s-mem)
+                              :ssl (ssl-new ctx)
+                              :io-on-read #'process-client-hello)))
+    (ssl-set-accept-state (client-ssl client))
+    (ssl-set-bio (client-ssl client) (client-rbio client) (client-wbio client))
+    client))
+
+(defun add-socket-to-fdset (fdset socket client)
+  "Find free slot in the FDSET and put client there."
+  (let ((fd-idx (pop *empty-fdset-items*)))
+    (with-foreign-slots ((fd events)
+                         (inc-pointer fdset (* fd-idx size-of-pollfd))
+                         (:struct pollfd))
+      (setf fd socket events (logior c-pollerr c-pollhup c-pollnval c-pollin)))
+    (setf (client-fdset-idx client) fd-idx)))
+
+(defun init-fdset (fdset size)
+  (loop for i from 0 to (1- size)
+        do
+           (with-foreign-slots ((fd events) fdset (:struct pollfd))
+             (setf fd -1))
+           (setf fdset (inc-pointer fdset size-of-pollfd))))
+
+(defun handle-client-io (client fdset)
+  (let ((fd-ptr (inc-pointer fdset (* (client-fdset-idx client) size-of-pollfd))))
+    (process-client-fd fd-ptr client)
+    (when (client-encrypt-buf client)
+      (setf (client-encrypt-buf client)
+            (do-encrypt client (client-encrypt-buf client))))
+    (with-foreign-slots ((events)
+                         fd-ptr
+                         (:struct pollfd))
+      (setf events
+            (if (client-write-buf client)
+                (logior events c-pollout)
+                (logand events (logxor -1 c-pollout)))))))
 
 (defun serve-tls (&optional (host "0.0.0.0") (port 8443))
   (usocket:with-socket-listener (listening-socket host port
                                                   :reuse-address t
                                                   :element-type '(unsigned-byte 8))
     #+nil    (funcall announce-url-callback (url-from-socket listening-socket host tls))
-    (handler-case
-        (with-foreign-object (fdset '(:struct pollfd) 2)
-          (with-foreign-slots ((fd events) fdset (:struct pollfd))
-            (setf fd 0
-                  events c-pollin))
-          (let* ((s-mem (bio-s-mem))
-                 (ctx (make-ssl-context)))
-            (loop
-              (usocket:with-connected-socket (plain (usocket:socket-accept listening-socket
-                                                                           :element-type '(unsigned-byte 8)))
-                (let* ((socket  (sb-bsd-sockets:socket-file-descriptor
-                                 (usocket:socket plain)))
-                       (client (make-client :fd socket
-                                            :rbio (bio-new s-mem)
-                                            :wbio (bio-new s-mem)
-                                            :ssl (ssl-new ctx)
-                                            :io-on-read #'process-client-hello)))
-                  (ssl-set-accept-state (client-ssl client))
-                  (ssl-set-bio (client-ssl client) (client-rbio client) (client-wbio client))
+    (with-foreign-object (fdset '(:struct pollfd) *fdset-size*)
+      (init-fdset fdset *fdset-size*)
+      (let* ((s-mem (bio-s-mem))
+             (ctx (make-ssl-context))
+             (clients nil)
+             (*empty-fdset-items* (loop for i from 1 to (1- *fdset-size*) collect i)))
+        (with-foreign-slots ((fd events) fdset (:struct pollfd))
+          (setf fd (sb-bsd-sockets:socket-file-descriptor (usocket:socket listening-socket))
+                events (logior c-pollerr c-pollhup c-pollnval c-pollin)))
 
-                  (with-foreign-slots ((fd events)
-                                            (inc-pointer fdset size-of-pollfd)
-                                            (:struct pollfd))
-                    (setf fd socket events (logior c-pollerr c-pollhup c-pollnval c-pollin)))
-
-                  (loop
-                    (with-foreign-slots ((fd events revents)
-                                              (inc-pointer fdset size-of-pollfd)
-                                              (:struct pollfd))
-                      (setf events (logand events (logxor -1 c-pollout)))
-                      (when (client-write-buf client)
-                        (setf events (logior events c-pollout))))
-                    (let ((nread (poll fdset 2 -1)))
-                      (unless (zerop nread)
-                        (process-client-fd (inc-pointer fdset size-of-pollfd) client)
-                        (when (client-encrypt-buf client)
-                          (setf (client-encrypt-buf client)
-                                (do-encrypt client (client-encrypt-buf client))))))))))))
-      (done () nil))))
+        (loop
+          (let ((nread (poll fdset *fdset-size* -1)))
+            (with-foreign-slots ((fd events revents) fdset (:struct pollfd))
+              (if (plusp (logand c-pollin revents))
+                  (let* ((socket (sb-bsd-sockets:socket-file-descriptor
+                                  (usocket:socket
+                                   (usocket:socket-accept listening-socket :element-type
+                                                          '(unsigned-byte 8)))))
+                         (client (make-client-object socket ctx s-mem)))
+                    (add-socket-to-fdset fdset socket client)
+                    (push client clients)))
+              (if (plusp (logand revents  (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
+                  (error "Error on listening socket")))
+            (unless (zerop nread)
+              (dolist (client clients)
+                (handler-case
+                    (handle-client-io client fdset)
+                  (done ()
+                    (ssl-free (client-ssl client))
+                    (push (client-fdset-idx client) *empty-fdset-items*)
+                    (with-foreign-slots ((fd events)
+                                         (inc-pointer fdset
+                                                      (* (client-fdset-idx client) size-of-pollfd))
+                                         (:struct pollfd))
+                      (setf fd -1))
+                    (setf clients (remove client clients))
+                    (close-fd (client-fd client))))))))))))
 
 ;;;; HTTP2 TLS async client
-
 (defun process-client-hello (client)
   (let ((vec (make-shareable-byte-vector +client-preface-length+)))
     (with-pointer-to-vector-data (buffer vec)
       (let ((read (ssl-read (client-ssl client) buffer +client-preface-length+)))
         (cond
-          ((not (plusp read))) ; just return and try again
+          ((not (plusp read)))          ; just return and try again
           ((/= read +client-preface-length+)
            (error "Read ~d octets. This is not enough octets for the client preface (or preface split, why?~%~s~%" read (subseq vec 0 read)))
           ((equalp vec +client-preface-start+)
