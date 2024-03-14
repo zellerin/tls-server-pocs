@@ -2,7 +2,7 @@
 (require 'usocket)
 (require 'cffi-grovel)
 
-(in-package #:tls-test/async/tls)
+(in-package #:tls-server/async/tls)
 
 (define-foreign-library openssl (:unix "libssl.so"))
 (use-foreign-library openssl)
@@ -10,7 +10,7 @@
 (defcfun "BIO_new" :pointer (bio-method :pointer))
 (defcfun "BIO_read" :int (bio-method :pointer) (data :pointer) (dlen :int))
 (defcfun "BIO_s_mem" :pointer)
-(defcfun "BIO_should_retry" :int (bio-method :pointer))
+(defcfun "BIO_test_flags" :int (bio :pointer) (what :int))
 (defcfun "BIO_write" :int (bio-method :pointer) (data :pointer) (dlen :int))
 
 (defcfun "SSL_CTX_check_private_key" :int (ctx :pointer))
@@ -33,16 +33,37 @@
 (defcfun ("read" read-2) :int (fd :int) (buf :pointer) (size :int))
 (defcfun ("write" write-2) :int (fd :int) (buf :pointer) (size :int))
 
-(defstruct client fd ssl rbio wbio write-buf encrypt-buf io-on-read)
+(mgl-pax:defsection  @async-server
+    (:title "Asynchronous TLS server")
+  (client type)
+  (make-ssl-context function))
+
+(defstruct client
+  "Data of one client connection. This includes:
+
+- File desriptor (FD),
+- SSL data opaque pointer (SSL),
+- Input and output BIO for exchanging data with OPENSSL (RBIO, WBIO),
+- Unencrypted octets to encrypt and send (WRITE-BUF),
+- Encrypted octets to send to the file descriptor (ENCRYPT-BUF),
+- Callback function when read data are available (IO-ON-READ)."
+  fd ssl rbio wbio write-buf encrypt-buf io-on-read)
 
 (defun make-ssl-context ()
-  (let ((context (ssl-ctx-new (tls-method))))
+  "Make a SSL context.
+
+This includes public and private key pair (from files in this directory),
+
+FIXME: We should not need both this and MINI-HTTP2:MAKE-HTTP2-TLS-CONTEXT"
+  (let ((context (ssl-ctx-new (tls-method)))
+        (*default-pathname-defaults*
+          (asdf:component-pathname (asdf:find-system "tls-server"))))
     (when (null-pointer-p context)
       (error "Could not create context"))
-    (with-foreign-string (file "/home/zellerin/projects/tls-server/certs/server.crt")
+    (with-foreign-string (file (namestring (merge-pathnames #P"certs/server.crt")))
       (unless (= 1 (ssl-ctx-use-certificate-file context file ssl-filetype-pem))
         (error "failed to load server certificate")))
-    (with-foreign-string (file "/home/zellerin/projects/tls-server/certs/server.key")
+    (with-foreign-string (file (namestring (merge-pathnames "certs/server.key")))
       (unless (= 1 (ssl-ctx-use-privatekey-file
                     context file ssl-filetype-pem))
         (error "failed to load server private key")))
@@ -53,7 +74,39 @@
     (mini-http2::ssl-ctx-set-alpn-select-cb  context (cffi:get-callback 'mini-http2::select-h2-callback))
     context))
 
+(defun move-encrypted-bytes (wbio client buffer vec)
+  "Move data encrypted by OpenSSL to the output socket queue."
+  (declare (optimize speed (safety 1) (debug 0))
+           ((simple-array (unsigned-byte 8)) vec))
+  (loop for n fixnum = (bio-read wbio buffer default-buf-size)
+        while (plusp n)
+        do (queue-encrypted-bytes client (subseq vec 0 n))))
+
+(defun do-io-if-wanted (client ret)
+  "Check real error after a call to SSL_connect, SSL_accept,
+SSL_do_handshake, SSL_read_ex, SSL_read, SSL_peek_ex, SSL_peek, SSL_shutdown,
+SSL_write_ex or SSL_write.
+
+If the operation was successfully completed, do nothing.
+
+If it is a harmless one (want read or want write), send data to be sent.
+
+Raise error otherwise."
+  (let ((ssl (client-ssl client))
+        (wbio (client-wbio client)))
+    (case (ssl-get-error ssl ret)
+      ((#.ssl-error-want-read #.ssl-error-want-write)
+       (let* ((vec (make-shareable-byte-vector default-buf-size)))
+         (with-pointer-to-vector-data (buffer vec)
+           (move-encrypted-bytes wbio client buffer vec)
+           (when
+               (zerop (bio-test-flags wbio bio-flags-should-retry))
+             (error "Should retry should be set.")))))
+      (#.ssl-error-none nil)
+      (t (error "Fail write: SSL error code is unknown")))))
+
 (defun maybe-init-ssl (client)
+  "If SSL is not initialized yet, initialize it"
   (when (zerop (ssl-is-init-finished (client-ssl client)))
     (do-io-if-wanted client (ssl-accept (client-ssl client)))))
 
@@ -102,10 +155,7 @@
                  (incf all-written written)
                  (inc-pointer buffer written)
                  (decf len written)
-                 (loop
-                   for n = (bio-read (client-wbio client) read-buffer default-buf-size)
-                   while (plusp n)
-                   do (queue-encrypted-bytes client (subseq read-vector 0 n)))
+                 (move-encrypted-bytes  (client-wbio client) read-buffer client read-vector)
                  (when (zerop len)
                    (return nil)))))))))))
 
@@ -113,21 +163,6 @@
   (setf (client-write-buf client)
         (append (client-write-buf client)
                 (list new-data))))
-
-(defun do-io-if-wanted (client ret)
-  (case (ssl-get-error (client-ssl client) ret)
-    ((#.ssl-error-want-read #.ssl-error-want-write)
-     (let* ((vec (make-shareable-byte-vector default-buf-size)))
-       (with-pointer-to-vector-data (buffer vec)
-         (loop for n = (bio-read (client-wbio client) buffer default-buf-size)
-               while (plusp n)
-               do (queue-encrypted-bytes client (subseq vec 0 n))
-               finally
-                  (when (and nil
-                             (zerop (bio-should-retry (client-wbio client))))
-                    (error "Should retry should be set."))))))
-    (#.ssl-error-none nil)
-    (t (error "Fail write: SSL error code is unknown"))))
 
 (defun on-read-cb (client buffer size)
   "Process SSL bytes received from the peer. The data needs to be fed into the

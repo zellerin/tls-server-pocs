@@ -1,4 +1,4 @@
-(in-package #:tls-test/async/tls)
+(in-package #:tls-server/async/tls)
 (include "poll.h")
 (cstruct pollfd "struct pollfd"
          (fd "fd" :type :int)
@@ -21,3 +21,5 @@
 (constant (ssl-op-all "SSL_OP_ALL"))
 
 (constant (ssl-ctrl-set-min-proto-version "SSL_CTRL_SET_MIN_PROTO_VERSION"))
+
+(constant (bio-flags-should-retry "BIO_FLAGS_SHOULD_RETRY"))

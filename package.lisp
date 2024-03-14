@@ -24,7 +24,7 @@
   (:import-from #:cl-async #:socket-data #:write-socket-data #:close-socket
                 #:start-event-loop #:tcp-server))
 
-(mgl-pax:define-package #:tls-test/async/tls
+(mgl-pax:define-package #:tls-server/async/tls
   (:use #:cl #:mini-http2 #:cffi))
 
 (in-package #:mini-http2)
@@ -46,7 +46,8 @@ So this repository implements:
   (tls-server/synchronous::@synchronous mgl-pax:section)
   (mini-http2::@use-http2-lib mgl-pax:section)
   (tls-server/async::@async  mgl-pax:section)
-  (mini-http2::@http2-protocol mgl-pax:section))
+  (mini-http2::@http2-protocol mgl-pax:section)
+  (tls-server/async/tls::@async-server mgl-pax:section))
 
 (mgl-pax:defsection mini-http2::@overview
     (:title "Overview")
