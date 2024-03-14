@@ -4,43 +4,34 @@
 
 (in-package #:tls-test/async/tls)
 
-(define-foreign-library openssl
-  (:unix "libssl.so"))
-
+(define-foreign-library openssl (:unix "libssl.so"))
 (use-foreign-library openssl)
 
-(defcfun "BIO_s_mem" :pointer)
 (defcfun "BIO_new" :pointer (bio-method :pointer))
-
-(defcfun "BIO_write" :int (bio-method :pointer) (data :pointer) (dlen :int))
 (defcfun "BIO_read" :int (bio-method :pointer) (data :pointer) (dlen :int))
-
+(defcfun "BIO_s_mem" :pointer)
 (defcfun "BIO_should_retry" :int (bio-method :pointer))
+(defcfun "BIO_write" :int (bio-method :pointer) (data :pointer) (dlen :int))
 
-
-(defcfun "SSL_new" :pointer (bio-method :pointer))
-(defcfun "SSL_read" :int (ssl :pointer) (buffer :pointer) (bufsize :int))
-(defcfun "SSL_write" :int (ssl :pointer) (buffer :pointer) (bufsize :int))
+(defcfun "SSL_CTX_check_private_key" :int (ctx :pointer))
+(defcfun "SSL_CTX_ctrl" :int (ctx :pointer) (cmd :int) (value :long) (args :pointer))
+(defcfun "SSL_CTX_new" :pointer (method :pointer))
+(defcfun "SSL_CTX_set_options" :int (ctx :pointer) (options :uint))
+(defcfun "SSL_CTX_use_PrivateKey_file" :int (ctx :pointer) (path :string) (type :int))
+(defcfun "SSL_CTX_use_certificate_file" :int (ctx :pointer) (path :string) (type :int))
+(defcfun "SSL_accept" :int (ssl :pointer))
 (defcfun "SSL_get_error" :int (ssl :pointer) (ret :int))
 (defcfun "SSL_is_init_finished" :int (ssl :pointer))
-(defcfun "OpenSSL_add_all_algorithms" :void) ; FIXME: obsolete
-(defcfun "SSL_CTX_new" :pointer (method :pointer))
-(defcfun "TLS_method" :pointer)
-(defcfun "SSL_CTX_use_certificate_file" :int (ctx :pointer) (path :string) (type :int))
-(defcfun "SSL_CTX_use_PrivateKey_file" :int (ctx :pointer) (path :string) (type :int))
-(defcfun "SSL_CTX_check_private_key" :int (ctx :pointer))
-
+(defcfun "SSL_new" :pointer (bio-method :pointer))
+(defcfun "SSL_read" :int (ssl :pointer) (buffer :pointer) (bufsize :int))
 (defcfun "SSL_set_accept_state" :pointer (ssl :pointer))
-;(defcfun "SSL_library_init" :int) no longer needed
-(defcfun "SSL_accept" :int (ssl :pointer))
 (defcfun "SSL_set_bio" :pointer (ssl :pointer) (rbio :pointer) (wbio :pointer))
-(defcfun "SSL_CTX_set_options" :int (ctx :pointer) (options :uint))
-(defcfun "SSL_CTX_ctrl" :int (ctx :pointer) (cmd :int) (value :long) (args :pointer))
+(defcfun "SSL_write" :int (ssl :pointer) (buffer :pointer) (bufsize :int))
+(defcfun "TLS_method" :pointer)
 
 (defcfun "poll" :int (fdset :pointer) (rb :int) (timeout :int))
 (defcfun ("read" read-2) :int (fd :int) (buf :pointer) (size :int))
 (defcfun ("write" write-2) :int (fd :int) (buf :pointer) (size :int))
-
 
 (defstruct client fd ssl rbio wbio write-buf encrypt-buf io-on-read)
 
