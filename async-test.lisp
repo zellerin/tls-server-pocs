@@ -71,14 +71,14 @@ FIXME: We should not need both this and MINI-HTTP2:MAKE-HTTP2-TLS-CONTEXT"
       (error "server private/public key mismatch"))
     (ssl-ctx-set-options context ssl-op-all)
     (ssl-ctx-ctrl context ssl-ctrl-set-min-proto-version tls-1.2-version (null-pointer))
-    (mini-http2::ssl-ctx-set-alpn-select-cb  context (cffi:get-callback 'mini-http2::select-h2-callback))
+    (mini-http2::ssl-ctx-set-alpn-select-cb  context (get-callback 'mini-http2::select-h2-callback))
     context))
 
 (defun move-encrypted-bytes (wbio client buffer vec)
   "Move data encrypted by OpenSSL to the output socket queue."
   (declare (optimize speed (safety 1) (debug 0))
            ((simple-array (unsigned-byte 8)) vec))
-  (loop for n fixnum = (bio-read wbio buffer default-buf-size)
+  (loop for n fixnum = (bio-read wbio buffer *default-buffer-size*)
         while (plusp n)
         do (queue-encrypted-bytes client (subseq vec 0 n))))
 
@@ -96,11 +96,11 @@ Raise error otherwise."
         (wbio (client-wbio client)))
     (case (ssl-get-error ssl ret)
       ((#.ssl-error-want-read #.ssl-error-want-write)
-       (let* ((vec (make-shareable-byte-vector default-buf-size)))
+       (let* ((vec (make-shareable-byte-vector *default-buffer-size*)))
          (with-pointer-to-vector-data (buffer vec)
+           (declare (dynamic-extent buffer))
            (move-encrypted-bytes wbio client buffer vec)
-           (when
-               (zerop (bio-test-flags wbio bio-flags-should-retry))
+           (when (zerop (bio-test-flags wbio bio-flags-should-retry))
              (error "Should retry should be set.")))))
       (#.ssl-error-none nil)
       (t (error "Fail write: SSL error code is unknown")))))
@@ -111,12 +111,20 @@ Raise error otherwise."
     (do-io-if-wanted client (ssl-accept (client-ssl client)))))
 
 (defun send-unencrypted-bytes-v1 (client new-data)
+  "Process new data to be encrypted and sent to client.
+
+Simpler variant - data are just concatenated to the ENCRYPT-BUF. Someone later,
+they would be encrypted and passed."
   (setf (client-encrypt-buf client)
         (concatenate '(vector (unsigned-byte 8))
                      (client-encrypt-buf client)
                      new-data)))
 
 (defun send-unencrypted-bytes-v2 (client new-data)
+  "Process new data to be encrypted and sent to client.
+
+Pass for encoding everything in the queue and new data. Set the buffer to the
+data that were not accepted for encoding yet."
   (let ((data-to-send (client-encrypt-buf client)))
     (declare ((simple-array (unsigned-byte 8)) new-data)
              ((or null (simple-array (unsigned-byte 8))) new-data data-to-send)
@@ -130,69 +138,82 @@ Raise error otherwise."
                              old-remaining new-data)
                 (do-encrypt client new-data))))))
 
-(defvar *unencrypted-sender* 'send-unencrypted-bytes-v1)
+(defvar *unencrypted-sender* 'send-unencrypted-bytes-v1
+  "Default function to send unencrypted data.")
 
 (defun send-unencrypted-bytes (client new-data)
+  "Process new data to be encrypted and sent to client."
   (funcall *unencrypted-sender* client new-data))
 
 (defun do-encrypt (client data)
+  "Encrypt data in client's ENCRYPT-BUF.
+
+Do nothing if no data to encrypt or SSL not yet initialized.
+
+Otherwise, use a temporary vector to write data "
   (unless (or (null data)
               (zerop (ssl-is-init-finished (client-ssl client))))
-    (let ((len (length data))
-          (all-written 0)
-          (read-vector (make-shareable-byte-vector default-buf-size)))
+    (let ((read-vector (make-shareable-byte-vector *default-buffer-size*)))
       (with-pointer-to-vector-data (read-buffer read-vector)
+        (declare (dynamic-extent read-buffer))
         (with-pointer-to-vector-data (buffer data)
+          (declare (dynamic-extent buffer))
           (loop
-            (let* ((written (ssl-write (client-ssl client) buffer len))
-                   (status (ssl-get-error (client-ssl client) written)))
-              (cond
-                ((not (member status (list ssl-error-none ssl-error-want-write ssl-error-want-read)))
-                 (error "SSL write failed, status ~d" status))
-                ((zerop written)
-                 (return (subseq data all-written)))
-                ((plusp written)
-                 (incf all-written written)
-                 (inc-pointer buffer written)
-                 (decf len written)
-                 (move-encrypted-bytes  (client-wbio client) read-buffer client read-vector)
-                 (when (zerop len)
-                   (return nil)))))))))))
+            with len = (length data)
+            and all-written = 0
+            and ssl = (client-ssl client)
+            for written = (ssl-write ssl buffer len)
+            for status = (ssl-get-error ssl written)
+            do
+               (cond
+                 ((= len written)
+                  (move-encrypted-bytes (client-wbio client) read-buffer client read-vector)
+                  (return nil))
+                 ((plusp written)
+                  (incf all-written written)
+                  (setf buffer (inc-pointer buffer written))
+                  (decf len written)
+                  (move-encrypted-bytes (client-wbio client) read-buffer client read-vector))
+                 ((not (member status (list ssl-error-none ssl-error-want-write ssl-error-want-read)))
+                  (error "SSL write failed, status ~d" status))
+                 ((zerop written)
+                  (return (subseq data all-written))))))))))
 
 (defun queue-encrypted-bytes (client new-data)
   (setf (client-write-buf client)
         (append (client-write-buf client)
                 (list new-data))))
 
-(defun on-read-cb (client buffer size)
-  "Process SSL bytes received from the peer. The data needs to be fed into the
-SSL object to be unencrypted."
+(defun decrypt-socket-octets (client buffer size)
+  "Process SIZE bytes received from the peer that are in the BUFFER.
+
+Fed them into the SSL object to be unencrypted, and let the client callback
+handle "
 
   ;; TODO: rewrite from C-in-Lisp to Lisp
-  (loop for n = (bio-write (client-rbio client) buffer size)
-        when (minusp n) do (error "Bio-write failed")
+  (loop for written = (bio-write (client-rbio client) buffer size)
+        when (minusp written) do (error "Bio-write failed")
           do
-             (decf size n)
-             (setf buffer (cffi:inc-pointer buffer n))
-             (maybe-init-ssl client)
+             (decf size written)
+             (setf buffer (inc-pointer buffer written))
+        #+probably-never-used (maybe-init-ssl client)
              (funcall (client-io-on-read client) client)
-             ;; The encrypted data is now in the input bio so now we can perform actual
-             ;; read of unencrypted data.
-
-             (do-io-if-wanted client n)
+             (do-io-if-wanted client written)
         when (zerop size)
           do (return)))
 
 (define-condition done (error)
-  ())
+  ()
+  (:documentation "The socket on the other side is closed."))
 
-(defconstant default-buf-size 64)
+(defvar *default-buffer-size* 64)
 
 (defun do-sock-read (client)
-  (cffi:with-foreign-object (buffer :char default-buf-size)
-    (let ((read (read-2 (client-fd client) buffer default-buf-size)))
+  "Read data from client socket. If something is read (and it should, as this is called when there should be a data), "
+  (with-foreign-object (buffer :char *default-buffer-size*)
+    (let ((read (read-2 (client-fd client) buffer *default-buffer-size*)))
       (if (plusp read)
-          (on-read-cb client buffer read)
+          (decrypt-socket-octets client buffer read)
           (error 'done)))))
 
 (defun concatenate* (vectors)
@@ -206,21 +227,24 @@ SSL object to be unencrypted."
           finally (return res))))
 
 (defun do-sock-write (client)
+  "Write buffered encrypted data to the client socket. Update the write buffer to
+keep what did not fit."
   (let ((concated (concatenate* (client-write-buf client))))
     (with-pointer-to-vector-data (buffer concated)
       (let ((n (write-2 (client-fd client) buffer
                         (length concated))))
-        (cond ((= n (length concated))
-               (setf (client-write-buf client) nil))
-              ((plusp n) (setf (client-write-buf client)
-                               (list (subseq concated n))))
-              (t (error "Write failed")))))))
+        (setf (client-write-buf client)
+              (cond ((= n (length concated))
+                     nil)
+                    ((plusp n)
+                     (list (subseq concated n)))
+                    (t (error "Write failed"))))))))
 
-(defun process-fd-1 (fd-ptr client)
-  "Process events available on FD 1 (client).
+(defun process-client-fd (fd-ptr client)
+  "Process events available on FD-PTR with CLIENT.
 
-The FD-PTR points to the field of the client; we use only revents of it."
-  (cffi:with-foreign-slots ((fd events revents) fd-ptr (:struct pollfd))
+Read if you can, write if you can, announce DONE when done."
+  (with-foreign-slots ((fd events revents) fd-ptr (:struct pollfd))
     (if (plusp (logand c-pollin revents))
         (do-sock-read client))
     (if (plusp (logand c-pollout revents))
@@ -228,17 +252,14 @@ The FD-PTR points to the field of the client; we use only revents of it."
     (if (plusp (logand revents  (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
         (error 'done))))
 
-(defun do-terminal-read (fd)
-  (break "Terminal read: ~a" fd))
-
 (defun serve-tls (&optional (host "0.0.0.0") (port 8443))
   (usocket:with-socket-listener (listening-socket host port
                                                   :reuse-address t
                                                   :element-type '(unsigned-byte 8))
     #+nil    (funcall announce-url-callback (url-from-socket listening-socket host tls))
     (handler-case
-        (cffi:with-foreign-object (fdset '(:struct pollfd) 2)
-          (cffi:with-foreign-slots ((fd events) fdset (:struct pollfd))
+        (with-foreign-object (fdset '(:struct pollfd) 2)
+          (with-foreign-slots ((fd events) fdset (:struct pollfd))
             (setf fd 0
                   events c-pollin))
           (let* ((s-mem (bio-s-mem))
@@ -256,21 +277,21 @@ The FD-PTR points to the field of the client; we use only revents of it."
                   (ssl-set-accept-state (client-ssl client))
                   (ssl-set-bio (client-ssl client) (client-rbio client) (client-wbio client))
 
-                  (cffi:with-foreign-slots ((fd events)
-                                            (cffi:inc-pointer fdset size-of-pollfd)
+                  (with-foreign-slots ((fd events)
+                                            (inc-pointer fdset size-of-pollfd)
                                             (:struct pollfd))
                     (setf fd socket events (logior c-pollerr c-pollhup c-pollnval c-pollin)))
 
                   (loop
-                    (cffi:with-foreign-slots ((fd events revents)
-                                              (cffi:inc-pointer fdset size-of-pollfd)
+                    (with-foreign-slots ((fd events revents)
+                                              (inc-pointer fdset size-of-pollfd)
                                               (:struct pollfd))
                       (setf events (logand events (logxor -1 c-pollout)))
                       (when (client-write-buf client)
                         (setf events (logior events c-pollout))))
                     (let ((nread (poll fdset 2 -1)))
                       (unless (zerop nread)
-                        (process-fd-1 (cffi:inc-pointer fdset size-of-pollfd) client)
+                        (process-client-fd (inc-pointer fdset size-of-pollfd) client)
                         (when (client-encrypt-buf client)
                           (setf (client-encrypt-buf client)
                                 (do-encrypt client (client-encrypt-buf client))))))))))))
@@ -279,8 +300,8 @@ The FD-PTR points to the field of the client; we use only revents of it."
 ;;;; HTTP2 TLS async client
 
 (defun process-client-hello (client)
-  (let ((vec (cffi:make-shareable-byte-vector +client-preface-length+)))
-    (cffi:with-pointer-to-vector-data (buffer vec)
+  (let ((vec (make-shareable-byte-vector +client-preface-length+)))
+    (with-pointer-to-vector-data (buffer vec)
       (let ((read (ssl-read (client-ssl client) buffer +client-preface-length+)))
         (cond
           ((not (plusp read))) ; just return and try again
@@ -294,8 +315,8 @@ The FD-PTR points to the field of the client; we use only revents of it."
            (error "Client preface incorrect. Does client send http2?~%~s~%" vec)))))))
 
 (defun process-header (client)
-  (let ((header (cffi:make-shareable-byte-vector 9))) ; header size
-    (cffi:with-pointer-to-vector-data (buffer header)
+  (let ((header (make-shareable-byte-vector 9))) ; header size
+    (with-pointer-to-vector-data (buffer header)
       (let ((read (ssl-read (client-ssl client) buffer 9)))
         (cond
           ((not (plusp read))) ; just return and try again
@@ -325,7 +346,7 @@ The FD-PTR points to the field of the client; we use only revents of it."
       #'process-header
       (lambda (client)
         (let ((vec (make-shareable-byte-vector count)))
-          (cffi:with-pointer-to-vector-data (buffer vec)
+          (with-pointer-to-vector-data (buffer vec)
             (let ((read (ssl-read (client-ssl client) buffer count)))
               (decf count read)
               (when (zerop count)
