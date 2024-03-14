@@ -66,30 +66,47 @@
   (when (zerop (ssl-is-init-finished (client-ssl client)))
     (do-io-if-wanted client (ssl-accept (client-ssl client)))))
 
-(defun send-unencrypted-bytes (client new-data)
+(defun send-unencrypted-bytes-v1 (client new-data)
   (setf (client-encrypt-buf client)
         (concatenate '(vector (unsigned-byte 8))
                      (client-encrypt-buf client)
                      new-data)))
 
-(defun do-encrypt (client)
-  (when (and (not (zerop (ssl-is-init-finished (client-ssl client))))
-             (client-encrypt-buf client))
-    (let ((len (length (client-encrypt-buf client)))
+(defun send-unencrypted-bytes-v2 (client new-data)
+  (let ((data-to-send (client-encrypt-buf client)))
+    (declare ((simple-array (unsigned-byte 8)) new-data)
+             ((or null (simple-array (unsigned-byte 8))) new-data data-to-send)
+             (optimize (safety 0) speed))
+    (let ((old-remaining
+            (when (client-encrypt-buf client)
+              (do-encrypt client data-to-send))))
+      (setf (client-encrypt-buf client)
+            (if old-remaining
+                (concatenate '(vector (unsigned-byte 8))
+                             old-remaining new-data)
+                (do-encrypt client new-data))))))
+
+(defvar *unencrypted-sender* 'send-unencrypted-bytes-v1)
+
+(defun send-unencrypted-bytes (client new-data)
+  (funcall *unencrypted-sender* client new-data))
+
+(defun do-encrypt (client data)
+  (unless (or (null data)
+              (zerop (ssl-is-init-finished (client-ssl client))))
+    (let ((len (length data))
           (all-written 0)
           (read-vector (make-shareable-byte-vector default-buf-size)))
       (with-pointer-to-vector-data (read-buffer read-vector)
-        (with-pointer-to-vector-data (buffer (client-encrypt-buf client))
+        (with-pointer-to-vector-data (buffer data)
           (loop
             (let* ((written (ssl-write (client-ssl client) buffer len))
                    (status (ssl-get-error (client-ssl client) written)))
               (cond
                 ((not (member status (list ssl-error-none ssl-error-want-write ssl-error-want-read)))
-                 (error "SSL write failed"))
+                 (error "SSL write failed, status ~d" status))
                 ((zerop written)
-                 (setf (client-encrypt-buf client)
-                       (subseq (client-encrypt-buf client) all-written))
-                 (return))
+                 (return (subseq data all-written)))
                 ((plusp written)
                  (incf all-written written)
                  (inc-pointer buffer written)
@@ -99,14 +116,12 @@
                    while (plusp n)
                    do (queue-encrypted-bytes client (subseq read-vector 0 n)))
                  (when (zerop len)
-                   (setf (client-encrypt-buf client) nil)
-                   (return)))))))))))
+                   (return nil)))))))))))
 
 (defun queue-encrypted-bytes (client new-data)
   (setf (client-write-buf client)
-        (concatenate '(vector (unsigned-byte 8))
-                     (client-write-buf client)
-                     new-data)))
+        (append (client-write-buf client)
+                (list new-data))))
 
 (defun do-io-if-wanted (client ret)
   (case (ssl-get-error (client-ssl client) ret)
@@ -154,15 +169,26 @@ SSL object to be unencrypted."
           (on-read-cb client buffer read)
           (error 'done)))))
 
+(defun concatenate* (vectors)
+  (let* ((len (reduce #'+ vectors :key #'length))
+         (res (make-array len :element-type '(unsigned-byte 8))))
+    (loop for v of-type (simple-array (unsigned-byte 8)) in vectors
+          with i = 0
+          do
+             (setf (subseq res i (+ i (length v))) v)
+             (incf i (length v))
+          finally (return res))))
+
 (defun do-sock-write (client)
-  (with-pointer-to-vector-data (buffer (client-write-buf client))
-    (let ((n (write-2 (client-fd client) buffer
-                      (length (client-write-buf client)))))
-      (cond ((= n (length (client-write-buf client)))
-             (setf (client-write-buf client) nil))
-            ((plusp n) (setf (client-write-buf client)
-                             (subseq (client-write-buf client) n)))
-            (t (error "Write failed"))))))
+  (let ((concated (concatenate* (client-write-buf client))))
+    (with-pointer-to-vector-data (buffer concated)
+      (let ((n (write-2 (client-fd client) buffer
+                        (length concated))))
+        (cond ((= n (length concated))
+               (setf (client-write-buf client) nil))
+              ((plusp n) (setf (client-write-buf client)
+                               (list (subseq concated n))))
+              (t (error "Write failed")))))))
 
 (defun process-fd-1 (fd-ptr client)
   "Process events available on FD 1 (client).
@@ -219,7 +245,9 @@ The FD-PTR points to the field of the client; we use only revents of it."
                     (let ((nread (poll fdset 2 -1)))
                       (unless (zerop nread)
                         (process-fd-1 (cffi:inc-pointer fdset size-of-pollfd) client)
-                        (do-encrypt client)))))))))
+                        (when (client-encrypt-buf client)
+                          (setf (client-encrypt-buf client)
+                                (do-encrypt client (client-encrypt-buf client))))))))))))
       (done () nil))))
 
 ;;;; HTTP2 TLS async client
