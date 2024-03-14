@@ -108,14 +108,6 @@
                      (client-write-buf client)
                      new-data)))
 
-#+unused(defun process-decrypted-bytes (client)
-  (let ((vec (cffi:make-shareable-byte-vector default-buf-size)))
-    (cffi:with-pointer-to-vector-data (buffer vec)
-      (let ((read (ssl-read (client-ssl client) buffer default-buf-size)))
-        (when (plusp read)
-          (funcall (client-io-on-read client) vec read)
-          (process-decrypted-bytes client))))))
-
 (defun do-io-if-wanted (client ret)
   (case (ssl-get-error (client-ssl client) ret)
     ((#.ssl-error-want-read #.ssl-error-want-write)
@@ -192,41 +184,43 @@ The FD-PTR points to the field of the client; we use only revents of it."
                                                   :reuse-address t
                                                   :element-type '(unsigned-byte 8))
     #+nil    (funcall announce-url-callback (url-from-socket listening-socket host tls))
-    (cffi:with-foreign-object (fdset '(:struct pollfd) 2)
-      (cffi:with-foreign-slots ((fd events) fdset (:struct pollfd))
-        (setf fd 0
-              events c-pollin))
-      (let* ((s-mem (bio-s-mem))
-             (ctx (make-ssl-context)))
-        (loop
-          (usocket:with-connected-socket (plain (usocket:socket-accept listening-socket
-                                                                       :element-type '(unsigned-byte 8)))
-            (let* ((socket  (sb-bsd-sockets:socket-file-descriptor
-                             (usocket:socket plain)))
-                   (client (make-client :fd socket
-                                        :rbio (bio-new s-mem)
-                                        :wbio (bio-new s-mem)
-                                        :ssl (ssl-new ctx)
-                                        :io-on-read #'process-client-hello)))
-              (ssl-set-accept-state (client-ssl client))
-              (ssl-set-bio (client-ssl client) (client-rbio client) (client-wbio client))
+    (handler-case
+        (cffi:with-foreign-object (fdset '(:struct pollfd) 2)
+          (cffi:with-foreign-slots ((fd events) fdset (:struct pollfd))
+            (setf fd 0
+                  events c-pollin))
+          (let* ((s-mem (bio-s-mem))
+                 (ctx (make-ssl-context)))
+            (loop
+              (usocket:with-connected-socket (plain (usocket:socket-accept listening-socket
+                                                                           :element-type '(unsigned-byte 8)))
+                (let* ((socket  (sb-bsd-sockets:socket-file-descriptor
+                                 (usocket:socket plain)))
+                       (client (make-client :fd socket
+                                            :rbio (bio-new s-mem)
+                                            :wbio (bio-new s-mem)
+                                            :ssl (ssl-new ctx)
+                                            :io-on-read #'process-client-hello)))
+                  (ssl-set-accept-state (client-ssl client))
+                  (ssl-set-bio (client-ssl client) (client-rbio client) (client-wbio client))
 
-              (cffi:with-foreign-slots ((fd events)
-                                        (cffi:inc-pointer fdset size-of-pollfd)
-                                        (:struct pollfd))
-                (setf fd socket events (logior c-pollerr c-pollhup c-pollnval c-pollin)))
+                  (cffi:with-foreign-slots ((fd events)
+                                            (cffi:inc-pointer fdset size-of-pollfd)
+                                            (:struct pollfd))
+                    (setf fd socket events (logior c-pollerr c-pollhup c-pollnval c-pollin)))
 
-              (loop
-                (cffi:with-foreign-slots ((fd events revents)
-                                          (cffi:inc-pointer fdset size-of-pollfd)
-                                          (:struct pollfd))
-                  (setf events (logand events (logxor -1 c-pollout)))
-                  (when (client-write-buf client)
-                    (setf events (logior events c-pollout))))
-                (let ((nread (poll fdset 2 -1)))
-                  (unless (zerop nread)
-                    (process-fd-1 (cffi:inc-pointer fdset size-of-pollfd) client)
-                    (do-encrypt client)))))))))))
+                  (loop
+                    (cffi:with-foreign-slots ((fd events revents)
+                                              (cffi:inc-pointer fdset size-of-pollfd)
+                                              (:struct pollfd))
+                      (setf events (logand events (logxor -1 c-pollout)))
+                      (when (client-write-buf client)
+                        (setf events (logior events c-pollout))))
+                    (let ((nread (poll fdset 2 -1)))
+                      (unless (zerop nread)
+                        (process-fd-1 (cffi:inc-pointer fdset size-of-pollfd) client)
+                        (do-encrypt client)))))))))
+      (done () nil))))
 
 ;;;; HTTP2 TLS async client
 
@@ -259,7 +253,8 @@ The FD-PTR points to the field of the client; we use only revents of it."
              (declare ((unsigned-byte 8) type)
                       (frame-size frame-size))
              (when (= type +goaway-frame-type+)
-               (cerror "OK" "got goaway frame, leaving~%~s~%" header))
+               ;; TODO: handle go-away frame
+               )
              (unless (>= 16384 frame-size)
                (error  "Too big header! go-away"))
              (let ((id-to-process (get-stream-id-if-ends header)))
