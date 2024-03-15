@@ -151,40 +151,18 @@ Raise error otherwise."
   (when (zerop (ssl-is-init-finished (client-ssl client)))
     (do-io-if-wanted client (ssl-accept (client-ssl client)))))
 
-(defun send-unencrypted-bytes-v1 (client new-data)
+(defun send-unencrypted-bytes (client new-data)
   "Process new data to be encrypted and sent to client.
 
-Simpler variant - data are just concatenated to the ENCRYPT-BUF. Someone later,
+Data are just concatenated to the ENCRYPT-BUF. Someone later,
 they would be encrypted and passed."
   (setf (client-encrypt-buf client)
         (concatenate '(vector (unsigned-byte 8))
                      (client-encrypt-buf client)
                      new-data)))
 
-(defun send-unencrypted-bytes-v2 (client new-data)
-  "Process new data to be encrypted and sent to client.
-
-Pass for encoding everything in the queue and new data. Set the buffer to the
-data that were not accepted for encoding yet."
-  (let ((data-to-send (client-encrypt-buf client)))
-    (declare ((simple-array (unsigned-byte 8)) new-data)
-             ((or null (simple-array (unsigned-byte 8))) new-data data-to-send)
-             (optimize (safety 0) speed))
-    (let ((old-remaining
-            (when (client-encrypt-buf client)
-              (do-encrypt client data-to-send))))
-      (setf (client-encrypt-buf client)
-            (if old-remaining
-                (concatenate '(vector (unsigned-byte 8))
-                             old-remaining new-data)
-                (do-encrypt client new-data))))))
-
 (defvar *unencrypted-sender* 'send-unencrypted-bytes-v1
   "Default function to send unencrypted data.")
-
-(defun send-unencrypted-bytes (client new-data)
-  "Process new data to be encrypted and sent to client."
-  (funcall *unencrypted-sender* client new-data))
 
 (defun do-encrypt (client data)
   "Encrypt data in client's ENCRYPT-BUF.
