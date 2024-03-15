@@ -8,7 +8,6 @@
 (use-foreign-library openssl)
 
 (defcfun "BIO_new" :pointer (bio-method :pointer))
-(defcfun "BIO_free" :pointer (bio :pointer))
 (defcfun "BIO_read" :int (bio-method :pointer) (data :pointer) (dlen :int))
 (defcfun "BIO_s_mem" :pointer)
 (defcfun "BIO_test_flags" :int (bio :pointer) (what :int))
@@ -39,7 +38,29 @@
 (mgl-pax:defsection  @async-server
     (:title "Asynchronous TLS server")
   (client type)
-  (make-ssl-context function))
+  (@communication-setup mgl-pax:section)
+  (@request-handling mgl-pax:section))
+
+(mgl-pax:defsection @communication-setup
+    (:title "Communication setup")
+  (make-ssl-context functionxs))
+
+(mgl-pax:defsection @request-handling
+    (:title "Communication setup")
+  "When POLL returns, each client is tested by PROCESS-CLIENT-FD whether read (or
+write is possible). If so, DO-SOCK-READ is called to read the data, DECRYPT-SOCKET-OCTETS decrypts them, and calls a callback (slot IO-ON-READ of the client) to process them.
+
+The application defined callback reads the data using SSL-READ, processes them, and sends response with SEND-UNENCRYPTED-BYTES.
+
+SEND-UNENCRYPTED-BYTES feeds data to a client buffer (slot ENCRYPT-BUF), and
+later this data are processed by DO-ENCRYPT and after encryption are buffered in WRITE-BUF of the client. These data are sent to the client socket eventually by DO-SOCK-WRITE called from PROCESS-CLIENT-FD on the callback."
+  (process-client-fd function)
+  (do-sock-read function)
+  (decrypt-socket-octets function)
+  (ssl-read function)
+  (send-unencrypted-bytes function)
+  (do-encrypt function)
+  (do-sock-write function))
 
 (defstruct client
   "Data of one client connection. This includes:
@@ -210,7 +231,7 @@ handle "
 (defvar *default-buffer-size* 64)
 
 (defun do-sock-read (client)
-  "Read data from client socket. If something is read (and it should, as this is called when there should be a data), "
+  "Read data from client socket. If something is read (and it should, as this is called when there should be a data), it is passed to the "
   (with-foreign-object (buffer :char *default-buffer-size*)
     (let ((read (read-2 (client-fd client) buffer *default-buffer-size*)))
       (if (plusp read)
