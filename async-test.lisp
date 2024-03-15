@@ -362,47 +362,48 @@ Read if you can, write if you can, announce DONE when done."
                     (close-fd (client-fd client))))))))))))
 
 ;;;; HTTP2 TLS async client
-(defun process-client-hello (client)
+(defun on-complete-ssl-data (ssl octets fn)
+  "Read exactly OCTETS octets from SSL to VEC.
+Raise error if only part of data is available."
   (let ((vec (make-shareable-byte-vector +client-preface-length+)))
     (with-pointer-to-vector-data (buffer vec)
-      (let ((read (ssl-read (client-ssl client) buffer +client-preface-length+)))
+      (let ((read (ssl-read ssl buffer octets)))
         (cond
-          ((not (plusp read)))          ; just return and try again
-          ((/= read +client-preface-length+)
-           (error "Read ~d octets. This is not enough octets for the client preface (or preface split, why?~%~s~%" read (subseq vec 0 read)))
-          ((equalp vec +client-preface-start+)
-           (send-unencrypted-bytes client mini-http2::*settings-frame*)
-           (send-unencrypted-bytes client mini-http2::*ack-frame*)
-           (setf (client-io-on-read client) #'process-header))
-          (t
-           (error "Client preface incorrect. Does client send http2?~%~s~%" vec)))))))
+          ((not (plusp read)))            ; just return and try again
+          ((/= read octets)
+           (error "Read ~d octets. This is not enough octets, why?~%~s~%" read (subseq vec 0 read)))
+          (t (funcall fn vec)))))))
+
+(defun process-client-hello (client)
+  (on-complete-ssl-data (client-ssl client)  +client-preface-length+
+                        (lambda (vec)
+                          (cond ((equalp vec +client-preface-start+)
+                                 (send-unencrypted-bytes client mini-http2::*settings-frame*)
+                                 (send-unencrypted-bytes client mini-http2::*ack-frame*)
+                                 (setf (client-io-on-read client) #'process-header))
+                                (t
+                                 (error "Client preface incorrect. Does client send http2?~%~s~%" vec))))))
 
 (defun process-header (client)
-  (let ((header (make-shareable-byte-vector 9))) ; header size
-    (with-pointer-to-vector-data (buffer header)
-      (let ((read (ssl-read (client-ssl client) buffer 9)))
-        (cond
-          ((not (plusp read))) ; just return and try again
-          ((/= read 9)
-           (error "Read ~d octets. This is not enough for header." read))
-          (t
-           (let* ((frame-size (get-frame-size header))
-                  (type (get-frame-type header)))
-             (declare ((unsigned-byte 8) type)
-                      (frame-size frame-size))
-             (when (= type +goaway-frame-type+)
-               ;; TODO: handle go-away frame
-               )
-             (unless (>= 16384 frame-size)
-               (error  "Too big header! go-away"))
-             (let ((id-to-process (get-stream-id-if-ends header)))
-               (when id-to-process
-                 (send-unencrypted-bytes client
-                        (buffer-with-changed-stream *header-frame* id-to-process))
-                 (send-unencrypted-bytes client
-                        (buffer-with-changed-stream *data-frame* id-to-process))))
-             (setf (client-io-on-read client) (ignore-bytes frame-size))
-             (funcall (client-io-on-read client) client))))))))
+  (on-complete-ssl-data (client-ssl client) 9
+                        (lambda (header)
+                          (let* ((frame-size (get-frame-size header))
+                                 (type (get-frame-type header)))
+                            (declare ((unsigned-byte 8) type)
+                                     (frame-size frame-size))
+                            (when (= type +goaway-frame-type+)
+                              ;; TODO: handle go-away frame
+                              )
+                            (unless (>= 16384 frame-size)
+                              (error  "Too big header! go-away"))
+                            (let ((id-to-process (get-stream-id-if-ends header)))
+                              (when id-to-process
+                                (send-unencrypted-bytes client
+                                                        (buffer-with-changed-stream *header-frame* id-to-process))
+                                (send-unencrypted-bytes client
+                                                        (buffer-with-changed-stream *data-frame* id-to-process))))
+                            (setf (client-io-on-read client) (ignore-bytes frame-size))
+                            (funcall (client-io-on-read client) client)))))
 
 (defun ignore-bytes (count)
   (if (zerop count)
