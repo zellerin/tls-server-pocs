@@ -2,8 +2,9 @@
 ;;
 ;;;; Copyright (c) 2023 Tomáš Zellerin <tomas@zellerin.cz>
 (in-package #:cl)
-(mgl-pax:define-package #:mini-http2
+(mgl-pax:define-package  #:mini-http2
   (:use #:cl)
+  (:nicknames  #:tls-server)
   (:export #:go-away
            #:*settings-frame* #:*ack-frame* #:*header-frame* #:*data-frame*
            #:buffer-with-changed-stream #:get-frame-size #:get-stream-id

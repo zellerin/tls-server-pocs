@@ -60,4 +60,15 @@
 (deftest thread/native ()
   "Run tests on a threading server."
   (http2-client-native-test nil :thread)
-  (http2-client-curl-test :tls :none))
+  (http2-client-curl-test nil :thread)
+  (http2-client-curl-test :tls :thread))
+
+(deftest async/custom ()
+  "Run tests on a threading server."
+  (http2-client-curl-test :tls :async-custom))
+
+(deftest async/library ()
+  "Run tests on a threading server."
+  (http2-client-native-test nil :async)
+  (http2-client-curl-test nil :async)
+  (http2-client-curl-test nil :async))

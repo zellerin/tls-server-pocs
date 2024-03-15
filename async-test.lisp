@@ -13,6 +13,10 @@
 (defcfun "BIO_test_flags" :int (bio :pointer) (what :int))
 (defcfun "BIO_write" :int (bio-method :pointer) (data :pointer) (dlen :int))
 
+(defcfun "ERR_reason_error_string" :pointer (e :int))
+(defcfun "ERR_get_error" :int)
+
+
 (defcfun "SSL_CTX_check_private_key" :int (ctx :pointer))
 (defcfun "SSL_CTX_ctrl" :int (ctx :pointer) (cmd :int) (value :long) (args :pointer))
 (defcfun "SSL_CTX_new" :pointer (method :pointer))
@@ -43,7 +47,7 @@
 
 (mgl-pax:defsection @communication-setup
     (:title "Communication setup")
-  (make-ssl-context functionxs))
+  (make-ssl-context function))
 
 (mgl-pax:defsection @request-handling
     (:title "Communication setup")
@@ -118,16 +122,29 @@ If it is a harmless one (want read or want write), send data to be sent.
 Raise error otherwise."
   (let ((ssl (client-ssl client))
         (wbio (client-wbio client)))
-    (case (ssl-get-error ssl ret)
-      ((#.ssl-error-want-read #.ssl-error-want-write)
-       (let* ((vec (make-shareable-byte-vector *default-buffer-size*)))
-         (with-pointer-to-vector-data (buffer vec)
-           (declare (dynamic-extent buffer))
-           (move-encrypted-bytes wbio client buffer vec)
-           (when (zerop (bio-test-flags wbio bio-flags-should-retry))
-             (error "Should retry should be set.")))))
-      (#.ssl-error-none nil)
-      (t (error "Fail write: SSL error code is unknown")))))
+    (let ((err-code (ssl-get-error ssl ret)))
+      (case err-code
+        ((#.ssl-error-want-read #.ssl-error-want-write)
+         (let* ((vec (make-shareable-byte-vector *default-buffer-size*)))
+           (with-pointer-to-vector-data (buffer vec)
+             (declare (dynamic-extent buffer))
+             (move-encrypted-bytes wbio client buffer vec)
+             (when (zerop (bio-test-flags wbio bio-flags-should-retry))
+               (error "Should retry should be set.")))))
+        (#.ssl-error-none nil)
+        (#.ssl-error-ssl (process-ssl-errors))
+        (t (cerror "Ignore" "SSL error ~d during write attempt" err-code))))))
+
+(defun ssl-err-reason-error-string (code)
+  (foreign-string-to-lisp (err-reason-error-string code)))
+
+(defun process-ssl-errors ()
+  (loop for err =  (err-get-error)
+        until (zerop err)
+        unless (position err #(#xa000412 )) ;bad certificate
+          do
+             (cerror "Ignore" 'ssl-error-condition :code err)))
+
 
 (defun maybe-init-ssl (client)
   "If SSL is not initialized yet, initialize it"
@@ -228,6 +245,15 @@ handle "
   ()
   (:documentation "The socket on the other side is closed."))
 
+(define-condition ssl-error-condition (error)
+  ((code :accessor get-code :initarg :code))
+  (:documentation "The socket on the other side is closed."))
+
+(defmethod print-object ((object ssl-error-condition) stream)
+  (print-unreadable-object (object stream :type t :identity nil)
+    (format stream "~x: ~a" (get-code object)
+            (ssl-err-reason-error-string (get-code object)))))
+
 (defvar *default-buffer-size* 64)
 
 (defun do-sock-read (client)
@@ -318,48 +344,53 @@ Read if you can, write if you can, announce DONE when done."
                 (logior events c-pollout)
                 (logand events (logxor -1 c-pollout)))))))
 
-(defun serve-tls (&optional (host "0.0.0.0") (port 8443))
-  (usocket:with-socket-listener (listening-socket host port
-                                                  :reuse-address t
-                                                  :element-type '(unsigned-byte 8))
-    #+nil    (funcall announce-url-callback (url-from-socket listening-socket host tls))
-    (with-foreign-object (fdset '(:struct pollfd) *fdset-size*)
-      (init-fdset fdset *fdset-size*)
-      (let* ((s-mem (bio-s-mem))
-             (ctx (make-ssl-context))
-             (clients nil)
-             (*empty-fdset-items* (loop for i from 1 to (1- *fdset-size*) collect i)))
-        (with-foreign-slots ((fd events) fdset (:struct pollfd))
-          (setf fd (sb-bsd-sockets:socket-file-descriptor (usocket:socket listening-socket))
-                events (logior c-pollerr c-pollhup c-pollnval c-pollin)))
+(defun serve-tls (listening-socket)
+  (with-foreign-object (fdset '(:struct pollfd) *fdset-size*)
+    (init-fdset fdset *fdset-size*)
+    (let* ((s-mem (bio-s-mem))
+           (ctx (make-ssl-context))
+           (clients nil)
+           (*empty-fdset-items* (loop for i from 1 to (1- *fdset-size*) collect i)))
+      (with-foreign-slots ((fd events) fdset (:struct pollfd))
+        (setf fd (sb-bsd-sockets:socket-file-descriptor (usocket:socket listening-socket))
+              events (logior c-pollerr c-pollhup c-pollnval c-pollin)))
 
-        (loop
-          (let ((nread (poll fdset *fdset-size* -1)))
-            (with-foreign-slots ((fd events revents) fdset (:struct pollfd))
-              (if (plusp (logand c-pollin revents))
-                  (let* ((socket (sb-bsd-sockets:socket-file-descriptor
-                                  (usocket:socket
-                                   (usocket:socket-accept listening-socket :element-type
-                                                          '(unsigned-byte 8)))))
-                         (client (make-client-object socket ctx s-mem)))
-                    (add-socket-to-fdset fdset socket client)
-                    (push client clients)))
-              (if (plusp (logand revents  (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
-                  (error "Error on listening socket")))
-            (unless (zerop nread)
-              (dolist (client clients)
-                (handler-case
-                    (handle-client-io client fdset)
-                  (done ()
-                    (ssl-free (client-ssl client))
-                    (push (client-fdset-idx client) *empty-fdset-items*)
-                    (with-foreign-slots ((fd events)
-                                         (inc-pointer fdset
-                                                      (* (client-fdset-idx client) size-of-pollfd))
-                                         (:struct pollfd))
-                      (setf fd -1))
-                    (setf clients (remove client clients))
-                    (close-fd (client-fd client))))))))))))
+      (loop
+        (let ((nread (poll fdset *fdset-size* -1)))
+          (with-foreign-slots ((fd events revents) fdset (:struct pollfd))
+            (if (plusp (logand c-pollin revents))
+                (let* ((socket (sb-bsd-sockets:socket-file-descriptor
+                                (usocket:socket
+                                 (usocket:socket-accept listening-socket :element-type
+                                                        '(unsigned-byte 8)))))
+                       (client (make-client-object socket ctx s-mem)))
+                  (add-socket-to-fdset fdset socket client)
+                  (push client clients)))
+            (if (plusp (logand revents  (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
+                (error "Error on listening socket")))
+          (unless (zerop nread)
+            (dolist (client clients)
+              (restart-case
+                  (handler-case
+                      (handle-client-io client fdset)
+                    (done () (invoke-restart 'kill-http-stream)))
+                (kill-http-stream ()
+                  (ssl-free (client-ssl client))
+                  (push (client-fdset-idx client) *empty-fdset-items*)
+                  (with-foreign-slots ((fd events)
+                                       (inc-pointer fdset
+                                                    (* (client-fdset-idx client) size-of-pollfd))
+                                       (:struct pollfd))
+                    (setf fd -1))
+                  (setf clients (remove client clients))
+                  (close-fd (client-fd client)))))))))))
+
+(defmethod do-new-connection (socket (tls (eql :tls)) (dispatch-method (eql :async-custom)))
+  "Handle new connections using TLS-SERVE above."
+  (serve-tls socket)
+  (invoke-restart 'kill-server)   ; there is an outer loop in create-server that
+                                        ; we want to skip
+  )
 
 ;;;; HTTP2 TLS async client
 (defun on-complete-ssl-data (ssl octets fn)
@@ -369,7 +400,7 @@ Raise error if only part of data is available."
     (with-pointer-to-vector-data (buffer vec)
       (let ((read (ssl-read ssl buffer octets)))
         (cond
-          ((not (plusp read)))            ; just return and try again
+          ((not (plusp read)))          ; just return and try again
           ((/= read octets)
            (error "Read ~d octets. This is not enough octets, why?~%~s~%" read (subseq vec 0 read)))
           (t (funcall fn vec)))))))
