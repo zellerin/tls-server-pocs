@@ -7,8 +7,10 @@
   :system-name "Load test of TLS server"
   :start-system
   (unless (< iterations multi-threads)
-    (let ((thread (bt:make-thread (lambda () (mini-http2:create-server 8443 tls dispatch-method))
-                                  :name "Async TLS server")))
+    (let ((thread (bt:make-thread
+                   (lambda () (mini-http2:create-server 8443 tls dispatch-method))
+                   :initial-bindings `((*default-buffer-size* . ,buffer-size))
+                   :name "Async TLS server")))
       (with-output-to-string (*standard-output*)
         (when perf
           (sb-sprof:start-profiling :mode perf :threads (list thread)))
@@ -50,7 +52,25 @@
 (defclip h2load-full () (:output-file full.txt)
   *res*)
 
-(define-experiment load-simple (tls dispatch-method)
+(defclip time-full () (:output-file full.txt)
+  *timed*)
+
+(define-experiment load-very-simple ()
+  :simulator load-system
+  :instrumentation (h2load-req/s h2load-ttr h2load-suceeded)
+  :variables ((iterations '(2000))
+              (multi-threads '(1 2 10))
+              (buffer-size '(64))
+              (perf '(nil))
+              (sender-fn '(tls-test/async/tls::send-unencrypted-bytes-v1
+                           tls-test/async/tls::send-unencrypted-bytes-v2)))
+  :after-trial (write-current-experiment-data :format :ascii)
+  :before-trial (setf tls-test/async/tls::*unencrypted-sender* sender-fn)
+  :before-experiment (delete-file "/tmp/check.txt")
+  :after-experiment (setf tls-test/async/tls::*unencrypted-sender*
+                          'tls-test/async/tls::send-unencrypted-bytes-v1))
+
+(define-experiment load-simple ()
   :simulator load-system
   :system-version (format nil "Dispatch: ~a, TLS: ~s" dispatch-method tls)
   :instrumentation (h2load-finished h2load-req/s h2load-ttr h2load-suceeded)
