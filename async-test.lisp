@@ -77,6 +77,15 @@ later this data are processed by DO-ENCRYPT and after encryption are buffered in
 - Callback function when read data are available (IO-ON-READ)."
   fd ssl rbio wbio write-buf encrypt-buf io-on-read fdset-idx)
 
+(defun use-pem-for (context fn path error)
+  (setf path (merge-pathnames path))
+  (let ((full-path (probe-file (merge-pathnames path))))
+    (unless full-path
+      (error "~a (No PEM file ~a)" error path))
+    (with-foreign-string (file (namestring full-path))
+      (unless (= 1 (funcall fn context file ssl-filetype-pem))
+        (error "~a (Failed processing ~a)" error path)))))
+
 (defun make-ssl-context ()
   "Make a SSL context.
 
@@ -88,13 +97,10 @@ FIXME: We should not need both this and MINI-HTTP2:MAKE-HTTP2-TLS-CONTEXT"
           (asdf:component-pathname (asdf:find-system "tls-server"))))
     (when (null-pointer-p context)
       (error "Could not create context"))
-    (with-foreign-string (file (namestring (merge-pathnames #P"certs/server.crt")))
-      (unless (= 1 (ssl-ctx-use-certificate-file context file ssl-filetype-pem))
-        (error "failed to load server certificate")))
-    (with-foreign-string (file (namestring (merge-pathnames "certs/server.key")))
-      (unless (= 1 (ssl-ctx-use-privatekey-file
-                    context file ssl-filetype-pem))
-        (error "failed to load server private key")))
+    (use-pem-for context #'ssl-ctx-use-certificate-file #P"certs/server.crt"
+                 "failed to load server certificate")
+    (use-pem-for context #'ssl-ctx-use-privatekey-file #P"certs/server.key"
+                 "failed to load server private key")
     (unless (= 1 (ssl-ctx-check-private-key context))
       (error "server private/public key mismatch"))
     (ssl-ctx-set-options context ssl-op-all)
