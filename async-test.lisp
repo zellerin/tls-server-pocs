@@ -19,6 +19,7 @@
 
 (defcfun "SSL_CTX_check_private_key" :int (ctx :pointer))
 (defcfun "SSL_CTX_ctrl" :int (ctx :pointer) (cmd :int) (value :long) (args :pointer))
+(defcfun "SSL_CTX_free" :int (ctx :pointer))
 (defcfun "SSL_CTX_new" :pointer (method :pointer))
 (defcfun "SSL_CTX_set_options" :int (ctx :pointer) (options :uint))
 (defcfun "SSL_CTX_use_PrivateKey_file" :int (ctx :pointer) (path :string) (type :int))
@@ -107,6 +108,13 @@ FIXME: We should not need both this and MINI-HTTP2:MAKE-HTTP2-TLS-CONTEXT"
     (ssl-ctx-ctrl context ssl-ctrl-set-min-proto-version tls-1.2-version (null-pointer))
     (mini-http2::ssl-ctx-set-alpn-select-cb  context (get-callback 'mini-http2::select-h2-callback))
     context))
+
+(defmacro with-ssl-context ((ctx) &body body)
+  (check-type ctx symbol)
+  `(let ((,ctx (make-ssl-context)))
+     (unwind-protect
+          (progn ,@body)
+       (ssl-ctx-free ,ctx))))
 
 (defun move-encrypted-bytes (wbio client buffer vec)
   "Move data encrypted by OpenSSL to the output socket queue."
@@ -331,43 +339,43 @@ Read if you can, write if you can, announce DONE when done."
 (defun serve-tls (listening-socket)
   (with-foreign-object (fdset '(:struct pollfd) *fdset-size*)
     (init-fdset fdset *fdset-size*)
-    (let* ((s-mem (bio-s-mem))
-           (ctx (make-ssl-context))
-           (clients nil)
-           (*empty-fdset-items* (loop for i from 1 to (1- *fdset-size*) collect i)))
-      (with-foreign-slots ((fd events) fdset (:struct pollfd))
-        (setf fd (sb-bsd-sockets:socket-file-descriptor (usocket:socket listening-socket))
-              events (logior c-pollerr c-pollhup c-pollnval c-pollin)))
+    (with-ssl-context (ctx)
+      (let* ((s-mem (bio-s-mem))
+             (clients nil)
+             (*empty-fdset-items* (loop for i from 1 to (1- *fdset-size*) collect i)))
+        (with-foreign-slots ((fd events) fdset (:struct pollfd))
+          (setf fd (sb-bsd-sockets:socket-file-descriptor (usocket:socket listening-socket))
+                events (logior c-pollerr c-pollhup c-pollnval c-pollin)))
 
-      (loop
-        (let ((nread (poll fdset *fdset-size* -1)))
-          (with-foreign-slots ((fd events revents) fdset (:struct pollfd))
-            (if (plusp (logand c-pollin revents))
-                (let* ((socket (sb-bsd-sockets:socket-file-descriptor
-                                (usocket:socket
-                                 (usocket:socket-accept listening-socket :element-type
-                                                        '(unsigned-byte 8)))))
-                       (client (make-client-object socket ctx s-mem)))
-                  (add-socket-to-fdset fdset socket client)
-                  (push client clients)))
-            (if (plusp (logand revents  (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
-                (error "Error on listening socket")))
-          (unless (zerop nread)
-            (dolist (client clients)
-              (restart-case
-                  (handler-case
-                      (handle-client-io client fdset)
-                    (done () (invoke-restart 'kill-http-stream)))
-                (kill-http-stream ()
-                  (ssl-free (client-ssl client))
-                  (push (client-fdset-idx client) *empty-fdset-items*)
-                  (with-foreign-slots ((fd events)
-                                       (inc-pointer fdset
-                                                    (* (client-fdset-idx client) size-of-pollfd))
-                                       (:struct pollfd))
-                    (setf fd -1))
-                  (setf clients (remove client clients))
-                  (close-fd (client-fd client)))))))))))
+        (loop
+          (let ((nread (poll fdset *fdset-size* -1)))
+            (with-foreign-slots ((fd events revents) fdset (:struct pollfd))
+              (if (plusp (logand c-pollin revents))
+                  (let* ((socket (sb-bsd-sockets:socket-file-descriptor
+                                  (usocket:socket
+                                   (usocket:socket-accept listening-socket :element-type
+                                                          '(unsigned-byte 8)))))
+                         (client (make-client-object socket ctx s-mem)))
+                    (add-socket-to-fdset fdset socket client)
+                    (push client clients)))
+              (if (plusp (logand revents  (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
+                  (error "Error on listening socket")))
+            (unless (zerop nread)
+              (dolist (client clients)
+                (restart-case
+                    (handler-case
+                        (handle-client-io client fdset)
+                      (done () (invoke-restart 'kill-http-stream)))
+                  (kill-http-stream ()
+                    (ssl-free (client-ssl client))
+                    (push (client-fdset-idx client) *empty-fdset-items*)
+                    (with-foreign-slots ((fd events)
+                                         (inc-pointer fdset
+                                                      (* (client-fdset-idx client) size-of-pollfd))
+                                         (:struct pollfd))
+                      (setf fd -1))
+                    (setf clients (remove client clients))
+                    (close-fd (client-fd client))))))))))))
 
 (defmethod do-new-connection (socket (tls (eql :tls)) (dispatch-method (eql :async-custom)))
   "Handle new connections using TLS-SERVE above."
