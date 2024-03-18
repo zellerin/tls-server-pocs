@@ -59,12 +59,12 @@ The application defined callback reads the data using SSL-READ, processes them, 
 SEND-UNENCRYPTED-BYTES feeds data to a client buffer (slot ENCRYPT-BUF), and
 later this data are processed by DO-ENCRYPT and after encryption are buffered in WRITE-BUF of the client. These data are sent to the client socket eventually by DO-SOCK-WRITE called from PROCESS-CLIENT-FD on the callback."
   (process-client-fd function)
-  (do-sock-read function)
+  (process-data-on-socket function)
   (decrypt-socket-octets function)
   (ssl-read function)
   (send-unencrypted-bytes function)
-  (do-encrypt function)
-  (do-sock-write function))
+  (encrypt-data function)
+  (write-data-to-socket function))
 
 (defstruct client
   "Data of one client connection. This includes:
@@ -170,7 +170,7 @@ they would be encrypted and passed."
 (defvar *unencrypted-sender* 'send-unencrypted-bytes-v1
   "Default function to send unencrypted data.")
 
-(defun do-encrypt (client data)
+(defun encrypt-data (client data)
   "Encrypt data in client's ENCRYPT-BUF.
 
 Do nothing if no data to encrypt or SSL not yet initialized.
@@ -240,7 +240,7 @@ handle "
 
 (defvar *default-buffer-size* 64)
 
-(defun do-sock-read (client)
+(defun process-data-on-socket (client)
   "Read data from client socket. If something is read (and it should, as this is called when there should be a data), it is passed to the "
   (with-foreign-object (buffer :char *default-buffer-size*)
     (let ((read (read-2 (client-fd client) buffer *default-buffer-size*)))
@@ -258,7 +258,7 @@ handle "
              (incf i (length v))
           finally (return res))))
 
-(defun do-sock-write (client)
+(defun write-data-to-socket (client)
   "Write buffered encrypted data to the client socket. Update the write buffer to
 keep what did not fit."
   (let ((concated (concatenate* (client-write-buf client))))
@@ -278,9 +278,9 @@ keep what did not fit."
 Read if you can, write if you can, announce DONE when done."
   (with-foreign-slots ((fd events revents) fd-ptr (:struct pollfd))
     (if (plusp (logand c-pollin revents))
-        (do-sock-read client))
+        (process-data-on-socket client))
     (if (plusp (logand c-pollout revents))
-        (do-sock-write client))
+        (write-data-to-socket client))
     (if (plusp (logand revents  (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
         (signal 'done))))
 
@@ -319,7 +319,7 @@ Read if you can, write if you can, announce DONE when done."
     (process-client-fd fd-ptr client)
     (when (client-encrypt-buf client)
       (setf (client-encrypt-buf client)
-            (do-encrypt client (client-encrypt-buf client))))
+            (encrypt-data client (client-encrypt-buf client))))
     (with-foreign-slots ((events)
                          fd-ptr
                          (:struct pollfd))
