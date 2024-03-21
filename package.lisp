@@ -15,21 +15,13 @@ Also holds the top-level documentation sectins, @INDEX and @OVERVIEW."))
 (define-package #:tls-server/utils
   (:use #:cl #:mgl-pax
         ;; TODO: just go-away restart...
-        #:tls-server))
+        #:tls-server)
+  (:documentation "Octet processing utilities. See TLS-SERVER/UTILS::@OCTETS"))
 
 (define-package #:tls-server/mini-http2
   (:use #:cl #:tls-server/utils
         ;; TODO: just buffer needed
         #:tls-server)
-#+nil  (:export #:go-away
-           #:*settings-frame* #:*ack-frame* #:*header-frame* #:*data-frame*
-           #:buffer-with-changed-stream #:get-frame-size #:get-stream-id
-           #:get-stream-id-if-ends
-           #:+client-preface-length+ #:+goaway-frame-type+
-           #:stream-id #:frame-size #:octet-vector
-           #:fully-read-array
-           #:do-log #:*buffer*
-           #:read-client-preface)
   (:documentation
    "Basic functionality for low-level HTTP2 implementation."))
 
@@ -43,6 +35,12 @@ Also holds the top-level documentation sectins, @INDEX and @OVERVIEW."))
 
 (define-package #:tls-server/async/tls
   (:use #:cl #:tls-server/mini-http2 #:cffi #:tls-server))
+
+(defsection @packages
+    (:title "Packages")
+  (tls-server package)
+  (tls-server/utils package)
+  (#:tls-server/mini-http2 package))
 
 (defsection @index
     (:title "Experiments with HTTP/2 server")
@@ -64,7 +62,8 @@ So this repository implements:
   (tls-server/synchronous::@synchronous section)
   (tls-server/mini-http2::@use-http2-lib section)
   (tls-server/async::@async  section)
-  (tls-server/async/tls::@async-server section))
+  (tls-server/async/tls::@async-server section)
+  (@packages section))
 
 (defsection @overview
     (:title "Overview")

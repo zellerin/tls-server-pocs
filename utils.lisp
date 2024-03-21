@@ -7,7 +7,7 @@
   (fully-read-array function))
 
 (deftype octet-vector ()
-  "Simple (i.e., not adjustable and w/o fill pointer) onedimensional array of
+  "Simple (i.e., not adjustable and w/o fill pointer) one-dimensional array of
 octets"
   '(simple-array (unsigned-byte 8) (*)))
 
@@ -25,6 +25,6 @@ EOF, and we rely on that; if this happens, invoke GO-AWAY restart."
     vector))
 
 (defun octetize (array)
-  "Make a simple onedimensional array of same content as ARRAY."
+  "Make a simple one-dimensional array of octets with same content as ARRAY."
   (make-array (length array) :element-type '(unsigned-byte 8)
                              :initial-contents array))
