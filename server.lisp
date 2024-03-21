@@ -92,9 +92,13 @@ properly and return VALUE.")
 
 ;;;; TODO: document and review
 (mgl-pax:define-restart go-away (&optional value)
-  "Restart established in XXX
-properly and return VALUE.")
+  "Handler to be invoked to close HTTP connection from our side.
 
+It is established either in TLS-SERVER/SYNCHRONOUS:DO-CONNECTION.
+
+TODO: Should we have it in async-cffi loop as well?")
+
+;; TODO: why is this needed here?
 (defvar *buffer* nil
   "Preallocated buffer for reading from stream. This is initialized for each
 connection depending on the dispatch method.")
