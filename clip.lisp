@@ -25,6 +25,17 @@
           (bt:join-thread thread)
           (sb-sprof:stop-profiling))))))
 
+(defun foobar (&rest args)
+  (break "~s" args))
+
+(define-simulator foobar
+  :system-name "Load test of TLS server"
+  :start-system  foobar
+  )
+
+(define-experiment foobartest (a b)
+    :simulator foobar)
+
 (defclip h2load-req/s () ()
   (multiple-value-bind (match val)
       (cl-ppcre:scan-to-strings "req/s[ :]*([0-9\\.]+)[ ]*([0-9\\.]+)[ ]*([0-9\\.]+)" *res*)
@@ -141,9 +152,10 @@
   :simulator load-system
   :instrumentation (h2load-req/s h2load-suceeded h2load-finished)
   :variables ((iterations '(3000 10000))
-              (multi-threads '(1 2 5 10 20))
-              (clients '(1 2 5 10))
-              (perf '(:cpu))
+              (multi-threads '(10))
+              (clients '(10))
+              (buffer-size '(64))
+              (perf '(nil))
               (tls '(:tls))
               (dispatch-method '(:none :thread :async-custom)))
 
