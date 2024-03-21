@@ -14,6 +14,7 @@
                         "cl-async-ssl")
   :defsystem-depends-on ("cffi-grovel")
   :components ((:file "package")
+               (:file "server")
                (:file "utils")
                (:file "http2")
                (:file "tls")
@@ -27,7 +28,7 @@
   :depends-on ("tls-server" "fiasco" "cl-ppcre" "puri" "http2/client")
   :perform (asdf:test-op (o s)
                          (progn
-                           (symbol-call :fiasco '#:run-package-tests :package '#:mini-http2/tests
+                           (symbol-call :fiasco '#:run-package-tests :package '#:tls-server/mini-http2/tests
                                         :verbose t)
                            (symbol-call :fiasco '#:run-package-tests :package '#:tls-server/tests
                                         :verbose t))

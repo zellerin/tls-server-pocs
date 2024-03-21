@@ -18,7 +18,7 @@
                 (with-open-stream (response-stream
                                    (http2:make-transport-stream raw-stream nil nil))
                   (setq res
-                        (equalp (map 'vector 'char-code mini-http2::*result-text*)
+                        (equalp (map 'vector 'char-code tls-server/mini-http2::*result-text*)
                                 (http2::read-stream-content-into-byte-vector response-stream))))
              (invoke-restart 'kill-client))))))
     res))
@@ -26,7 +26,7 @@
 (defun query-port-using-curl (url)
   "Query a port using a client build upon http2 package."
   (is (null
-       (mismatch mini-http2::*result-text*
+       (mismatch tls-server/mini-http2::*result-text*
                  (uiop:run-program
                   `("curl" ,(puri:render-uri url nil) "-k" "--http2-prior-knowledge")
                   :output :string)))))
@@ -35,19 +35,19 @@
   "Test the server using curl."
   (dolist (tls '(nil :tls))
     (dolist (model '(:none :thread #+nil :poll))
-      (is (mini-http2:create-server 0 nil model
+      (is (tls-server/mini-http2:create-server 0 nil model
                                     :announce-url-callback (callback-on-server
                                                             #'query-port-using-curl))))))
 
 (defun http2-client-curl-test (tls model)
   "Test the server using curl."
-  (is (mini-http2:create-server 0 tls model
+  (is (tls-server/mini-http2:create-server 0 tls model
                                 :announce-url-callback (callback-on-server
                                                         #'query-port-using-curl))))
 
 (defun http2-client-native-test (tls model)
   "Test the server from http2-based client."
-  (is (mini-http2:create-server 0 tls model
+  (is (tls-server/mini-http2:create-server 0 tls model
                                 :announce-url-callback (callback-on-server
                                                         #'query-port-using-http2))))
 

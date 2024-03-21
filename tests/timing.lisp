@@ -20,7 +20,7 @@
 
 (deftest test-speed-single/core (tls method)
   (is
-      (mini-http2:create-server
+      (tls-server/mini-http2:create-server
        0 tls method
        :announce-url-callback (callback-on-server #'test-port
                                                   :thread-name (princ-to-string (list method tls))))))

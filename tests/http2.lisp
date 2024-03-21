@@ -1,4 +1,4 @@
-(in-package mini-http2/tests)
+(in-package tls-server/mini-http2/tests)
 
 
 (deftest url-from-socket/test ()
@@ -56,7 +56,7 @@
              (funcall (callback-on-server
                        (lambda (a)
                          (handler-bind
-                             ((error (lambda (e) (invoke-restart 'mini-http2::kill-parent))))
+                             ((error (lambda (e) (invoke-restart 'tls-server/mini-http2::kill-parent))))
                            (error "An error"))))
                       "http://foo/")
              (sleep 10)

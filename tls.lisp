@@ -1,4 +1,4 @@
-(in-package :mini-http2)
+(in-package :tls-server/mini-http2)
 
 (mgl-pax:defsection @tls (:title "TLS")
   "HTTP/2 is deeply connected with \\TLS. This interaction is represented with
@@ -102,8 +102,8 @@ This is a simple wrapper over CL+SSL."
 
 (defun read-tls-vector (buf stream start end)
   (declare (optimize speed)
-           (mini-http2:frame-size start end)
-           (mini-http2:octet-vector buf))
+           (tls-server/mini-http2:frame-size start end)
+           (tls-server/mini-http2:octet-vector buf))
   (let ((handle (cl+ssl::ssl-stream-handle stream)))
     (handler-case
         (cffi:with-pointer-to-vector-data (ptr buf)

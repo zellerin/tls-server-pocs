@@ -1,4 +1,4 @@
-(in-package mini-http2)
+(in-package tls-server/utils)
 
 (mgl-pax:defsection @octets ()
     "Simplify work with octet vectors"
@@ -30,6 +30,7 @@ EOF, and we rely on that; if this happens, invoke GO-AWAY restart."
                              :initial-contents array))
 
 
+;;;; TODO: remove as obsolete
 (mgl-pax:defsection @tracing ()
   "SBCL allows trace to call an arbitraty function. We use this to store traces to
 an array that can be analysed later."

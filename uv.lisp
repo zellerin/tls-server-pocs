@@ -147,7 +147,7 @@ Pros: This version can be run in one thread and process many clients.
 Cons: requires a specific C library, and the implementation as-is depends on
 SBCL internal function - we re-use the file descriptor of socket created by
 usocket package, as otherwise access to the port of server is complicated."
-  (let ((ctx (mini-http2::make-http2-tls-context)))
+  (let ((ctx (tls-server/mini-http2::make-http2-tls-context)))
     (start-event-loop
      (lambda ()
        (cl-async-ssl:tcp-ssl-server nil nil
@@ -169,7 +169,7 @@ Pros: This version can be run in one thread and process many clients.
 Cons: requires a specific C library, and the implementation as-is depends on
 SBCL internal function - we re-use the file descriptor of socket created by
 usocket package, as otherwise access to the port of server is complicated."
-  (let ((ctx (mini-http2::make-http2-tls-context)))
+  (let ((ctx (tls-server/mini-http2::make-http2-tls-context)))
     (start-event-loop
      (lambda ()
        (cl-async-ssl:tcp-ssl-server nil nil

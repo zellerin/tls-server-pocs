@@ -92,7 +92,7 @@ later this data are processed by DO-ENCRYPT and after encryption are buffered in
 
 This includes public and private key pair (from files in this directory),
 
-FIXME: We should not need both this and MINI-HTTP2:MAKE-HTTP2-TLS-CONTEXT"
+FIXME: We should not need both this and TLS-SERVER/MINI-HTTP2:MAKE-HTTP2-TLS-CONTEXT"
   (let ((context (ssl-ctx-new (tls-method)))
         (*default-pathname-defaults*
           (asdf:component-pathname (asdf:find-system "tls-server"))))
@@ -106,7 +106,7 @@ FIXME: We should not need both this and MINI-HTTP2:MAKE-HTTP2-TLS-CONTEXT"
       (error "server private/public key mismatch"))
     (ssl-ctx-set-options context ssl-op-all)
     (ssl-ctx-ctrl context ssl-ctrl-set-min-proto-version tls-1.2-version (null-pointer))
-    (mini-http2::ssl-ctx-set-alpn-select-cb  context (get-callback 'mini-http2::select-h2-callback))
+    (tls-server/mini-http2::ssl-ctx-set-alpn-select-cb  context (get-callback 'tls-server/mini-http2::select-h2-callback))
     context))
 
 (defmacro with-ssl-context ((ctx) &body body)
@@ -424,8 +424,8 @@ Raise error if only part of data is available. FIXME: process that anyway"
   (on-complete-ssl-data (client-ssl client)  +client-preface-length+
                         (lambda (vec)
                           (cond ((equalp vec +client-preface-start+)
-                                 (send-unencrypted-bytes client mini-http2::*settings-frame*)
-                                 (send-unencrypted-bytes client mini-http2::*ack-frame*)
+                                 (send-unencrypted-bytes client tls-server/mini-http2::*settings-frame*)
+                                 (send-unencrypted-bytes client tls-server/mini-http2::*ack-frame*)
                                  (setf (client-io-on-read client) #'process-header))
                                 (t
                                  (error "Client preface incorrect. Does client send http2?~%~s~%" vec))))))
