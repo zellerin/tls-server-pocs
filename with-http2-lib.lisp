@@ -56,4 +56,4 @@ Terminate if either SSL error occurs, or go-away restart is invoked."
 
   (usocket:with-connected-socket (plain (usocket:socket-accept listening-socket
                                                                :element-type '(unsigned-byte 8)))
-    (do-connection/2 (get-stream plain tls))))
+    (do-connection/2 (maybe-add-tls plain tls))))

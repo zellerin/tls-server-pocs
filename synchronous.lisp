@@ -83,7 +83,7 @@ especially with request pilelining."
 
   (usocket:with-connected-socket (plain (usocket:socket-accept listening-socket
                                                                :element-type '(unsigned-byte 8)))
-    (do-connection (get-stream plain tls))))
+    (do-connection (maybe-add-tls plain tls))))
 
 (defmethod do-new-connection (listening-socket tls (dispatch-method (eql :thread)))
   "Handle the connection in a new thread."
@@ -92,6 +92,6 @@ especially with request pilelining."
     (bt:make-thread
      (lambda ()
        (unwind-protect
-            (do-connection (get-stream socket tls))
+            (do-connection (maybe-add-tls socket tls))
          (usocket:socket-close socket)))
      :name "HTTP2 connection server")))

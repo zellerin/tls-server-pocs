@@ -7,29 +7,48 @@ or h2load."
   (+client-preface-start+ variable)
   (+client-preface-length+ mgl-pax:constant)
   (read-client-preface function)
-  (*settings-frame* variable)
-  (*ack-frame* variable)
-  (stream-id type)
-  (*data-frame* variable)
-  (*header-frame* variable)
+
   (+goaway-frame-type+ variable)
-  (get-frame-size function)
+  (maybe-add-tls function)
+  (buffer-with-changed-stream function)
+  (send-response function)
+
+  (@prebuilt-frames mgl-pax:section)
+  (@header-extractors  mgl-pax:section)
+  (@errors mgl-pax:section))
+
+(mgl-pax:defsection @header-extractors (:title "Header parsing")
+  (stream-id type)
   (frame-size type)
-  (get-stream function)
+  "Following function extract appropriate parameter from the header."
   (get-stream-id function)
   (get-frame-type function)
   (get-frame-flags function)
-  (get-stream-id-if-ends function)
-  (buffer-with-changed-stream function)
-  (send-response function))
+  (get-frame-size function)
+  (get-stream-id-if-ends function))
 
+(mgl-pax:defsection @prebuilt-frames (:title "Prebuild frames")
+  (*settings-frame* variable)
+  (*ack-frame* variable)
+  (*data-frame* variable)
+  (*header-frame* variable))
+
+(mgl-pax:defsection @errors (:title "Error conditions")
+  (client-preface-mismatch condition))
+
+(define-condition client-preface-mismatch (error)
+  ((received :accessor get-received :initarg :received)))
+
+
+
 (defvar +client-preface-start+
   #(80 82 73 32 42 32 72 84 84 80 47 50 46 48 13 10 13 10 83 77 13 10 13 10)
   "Clients send 24 octets of +CLIENT-PREFACE-START+, which in hex
 notation is this. That is, the connection preface starts with the string \"PRI *
  HTTP/2.0\\r\\n\\r\\nSM\\r\\n\\r\\n\".")
 
-(defconstant +client-preface-length+ 24)
+(defconstant +client-preface-length+ 24
+  "Length of the client preface.")
 
 (defconstant +goaway-frame-type+ 7
   "When client is done (or after an error) it sends goaway frame, and both client
@@ -64,14 +83,17 @@ particular stream. Each stream is a 23 bit integer."
   "Frame size parameter can be 32 bits long; however, values above 2^14 are an error."
   '(unsigned-byte 32))
 
+;;;; TODO: move STREAM based input to synchronous?
 (defun read-client-preface (stream)
+  "Read the client preface from a stream and verify it.
+
+Signal CLIENT-PREFACE-MISMATCH on mismatch."
   (fully-read-array stream *buffer* +client-preface-length+)
   (assert (null
            (mismatch +client-preface-start+ *buffer* :end2 +client-preface-length+))
           ()
-          "Expected client preface, got ~s/~%~a"
-          (map 'string 'code-char (subseq *buffer* 0 +client-preface-length+))
-          (subseq *buffer* 0 +client-preface-length+)))
+          'client-preface-mismatch :received
+           (subseq *buffer* 0 +client-preface-length+)))
 
 (defun buffer-with-changed-stream (buf stream-id)
   "Change stream id of a frame in BUF to STREAM-ID."
@@ -102,7 +124,7 @@ particular stream. Each stream is a 23 bit integer."
 (defun get-frame-flags (header) (aref header 4))
 
 (defun get-stream-id-if-ends (header)
-  "Stream id when header closes the stream on client side."
+  "Stream id when header closes the stream on client side. Nil otherwise."
   (when (and (plusp (logand (get-frame-flags header) 1))
              ;; only data frame and header frame has end-stream
              (<= (get-frame-type header) 1))
@@ -114,8 +136,11 @@ particular stream. Each stream is a 23 bit integer."
   (write-sequence (buffer-with-changed-stream *data-frame* stream-id) stream)
   (force-output stream))
 
-(defgeneric get-stream (socket tls)
-  (:documentation "Return either plain (if tls is nil) or TLS (if :tls) stream build upon SOCKET")
+(defgeneric maybe-add-tls (socket tls)
+  (:documentation "Return either plain (if tls is nil) or TLS (if :tls) Lisp stream
+ build upon SOCKET stream.
+
+This is used by implementation that use usocket sockets.")
   (:method (socket (tls (eql :tls)))
     (wrap-to-tls socket))
   (:method (socket (tls (eql nil)))

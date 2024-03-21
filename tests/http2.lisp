@@ -55,8 +55,11 @@
            (progn
              (funcall (callback-on-server
                        (lambda (a)
+                         (declare (ignore a))
                          (handler-bind
-                             ((error (lambda (e) (invoke-restart 'kill-parent))))
+                             ((error (lambda (condition)
+                                       (declare (ignore condition))
+                                       (invoke-restart 'kill-parent))))
                            (error "An error"))))
                       "http://foo/")
              (sleep 10)
