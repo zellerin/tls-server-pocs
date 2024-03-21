@@ -99,16 +99,3 @@ This is a simple wrapper over CL+SSL."
               (namestring (merge-pathnames "certs/server.crt" topdir))
               :key (namestring (merge-pathnames "certs/server.key" topdir)))))
       tls-stream)))
-
-(defun read-tls-vector (buf stream start end)
-  (declare (optimize speed)
-           (frame-size start end)
-           (tls-server/utils:octet-vector buf))
-  (let ((handle (cl+ssl::ssl-stream-handle stream)))
-    (handler-case
-        (cffi:with-pointer-to-vector-data (ptr buf)
-          (cl+ssl::ensure-ssl-funcall
-           stream #'plusp #'cl+ssl::ssl-read handle (cffi:inc-pointer ptr start)
-           (- end start)))
-      (cl+ssl::ssl-error-zero-return () ;SSL_read returns 0 on end-of-file
-        start))))
