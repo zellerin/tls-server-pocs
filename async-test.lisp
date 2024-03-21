@@ -292,11 +292,13 @@ Read if you can, write if you can, announce DONE when done."
     (if (plusp (logand revents  (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
         (signal 'done))))
 
-(defvar *fdset-size* 10)
-(defvar *empty-fdset-items* (loop for i from 0 to (1- *fdset-size*) collect i))
+(defvar *fdset-size* 10
+  "Size of the fdset - that, is, maximum number of concurrent clients.")
+
+(defvar *empty-fdset-items* nil "List of empty slots in the fdset table.")
 
 (defun make-client-object (socket ctx s-mem)
-  "Make a new CLIENT object"
+  "Create new CLIENT object suitable for TLS server."
   (let* ((client (make-client :fd socket
                               :rbio (bio-new s-mem)
                               :wbio (bio-new s-mem)
@@ -306,21 +308,23 @@ Read if you can, write if you can, announce DONE when done."
     (ssl-set-bio (client-ssl client) (client-rbio client) (client-wbio client))
     client))
 
+(defun set-fd-slot (fdset socket new-events idx)
+  "Set FD and EVENTS of slot IDX in fdset."
+  (with-foreign-slots ((fd events)
+                       (inc-pointer fdset (* idx size-of-pollfd))
+                       (:struct pollfd))
+    (when socket (setf fd socket events new-events))))
+
 (defun add-socket-to-fdset (fdset socket client)
   "Find free slot in the FDSET and put client there."
   (let ((fd-idx (pop *empty-fdset-items*)))
-    (with-foreign-slots ((fd events)
-                         (inc-pointer fdset (* fd-idx size-of-pollfd))
-                         (:struct pollfd))
-      (setf fd socket events (logior c-pollerr c-pollhup c-pollnval c-pollin)))
+    (set-fd-slot fdset socket  (logior c-pollerr c-pollhup c-pollnval c-pollin) fd-idx )
     (setf (client-fdset-idx client) fd-idx)))
 
 (defun init-fdset (fdset size)
   (loop for i from 0 to (1- size)
         do
-           (with-foreign-slots ((fd events) fdset (:struct pollfd))
-             (setf fd -1))
-           (setf fdset (inc-pointer fdset size-of-pollfd))))
+           (set-fd-slot fdset -1 0 i)))
 
 (defun handle-client-io (client fdset)
   (let ((fd-ptr (inc-pointer fdset (* (client-fdset-idx client) size-of-pollfd))))
@@ -336,46 +340,62 @@ Read if you can, write if you can, announce DONE when done."
                 (logior events c-pollout)
                 (logand events (logxor -1 c-pollout)))))))
 
+(defun setup-new-connect-pollfd (fdset listening-socket)
+  (set-fd-slot fdset
+               (sb-bsd-sockets:socket-file-descriptor (usocket:socket listening-socket))
+                (logior c-pollerr c-pollhup c-pollnval c-pollin)
+                0))
+
+(defvar *clients* nil
+  "List of clients processed.")
+
+(defun process-new-client (fdset listening-socket ctx s-mem)
+  "Add new client: accept connection, create client and add it to pollfd and to *clients*."
+  (with-foreign-slots ((revents) fdset (:struct pollfd))
+    (if (plusp (logand c-pollin revents))
+        (let* ((socket (sb-bsd-sockets:socket-file-descriptor
+                        (usocket:socket
+                         (usocket:socket-accept listening-socket :element-type
+                                                '(unsigned-byte 8)))))
+               (client (make-client-object socket ctx s-mem)))
+          (add-socket-to-fdset fdset socket client)
+          ;; maybe TODO: if no fdset slot available, stop reading listening socket
+          (push client *clients*)))
+    (if (plusp (logand revents  (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
+        (error "Error on listening socket"))))
+
+(defun close-client-connection (fdset client)
+  (ssl-free (client-ssl client)) ; BIOs are closed automatically
+  (push (client-fdset-idx client) *empty-fdset-items*)
+  (set-fd-slot fdset -1 0 (client-fdset-idx client))
+  (setf *clients* (remove client *clients*))
+  (close-fd (client-fd client)))
+
+(defun process-client-sockets (fdset nread)
+  (unless (zerop nread)
+    (dolist (client *clients*)
+      (restart-case
+          (handler-case
+              (handle-client-io client fdset)
+            (done () (invoke-restart 'kill-http-connection)))
+        (kill-http-connection ()
+          (close-client-connection fdset client))))))
+
 (defun serve-tls (listening-socket)
   (with-foreign-object (fdset '(:struct pollfd) *fdset-size*)
     (init-fdset fdset *fdset-size*)
     (with-ssl-context (ctx)
       (let* ((s-mem (bio-s-mem))
-             (clients nil)
-             (*empty-fdset-items* (loop for i from 1 to (1- *fdset-size*) collect i)))
-        (with-foreign-slots ((fd events) fdset (:struct pollfd))
-          (setf fd (sb-bsd-sockets:socket-file-descriptor (usocket:socket listening-socket))
-                events (logior c-pollerr c-pollhup c-pollnval c-pollin)))
-
-        (loop
-          (let ((nread (poll fdset *fdset-size* -1)))
-            (with-foreign-slots ((fd events revents) fdset (:struct pollfd))
-              (if (plusp (logand c-pollin revents))
-                  (let* ((socket (sb-bsd-sockets:socket-file-descriptor
-                                  (usocket:socket
-                                   (usocket:socket-accept listening-socket :element-type
-                                                          '(unsigned-byte 8)))))
-                         (client (make-client-object socket ctx s-mem)))
-                    (add-socket-to-fdset fdset socket client)
-                    (push client clients)))
-              (if (plusp (logand revents  (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
-                  (error "Error on listening socket")))
-            (unless (zerop nread)
-              (dolist (client clients)
-                (restart-case
-                    (handler-case
-                        (handle-client-io client fdset)
-                      (done () (invoke-restart 'kill-http-stream)))
-                  (kill-http-stream ()
-                    (ssl-free (client-ssl client))
-                    (push (client-fdset-idx client) *empty-fdset-items*)
-                    (with-foreign-slots ((fd events)
-                                         (inc-pointer fdset
-                                                      (* (client-fdset-idx client) size-of-pollfd))
-                                         (:struct pollfd))
-                      (setf fd -1))
-                    (setf clients (remove client clients))
-                    (close-fd (client-fd client))))))))))))
+             (*clients* nil)
+             (*empty-fdset-items* (alexandria:iota (1- *fdset-size*) :start 1)))
+        (setup-new-connect-pollfd fdset listening-socket)
+        (unwind-protect
+             (loop
+               (let ((nread (poll fdset *fdset-size* -1)))
+                 (process-new-client fdset listening-socket ctx s-mem)
+                 (process-client-sockets fdset nread)))
+          (dolist (client *clients*)
+            (close-client-connection fdset client)))))))
 
 (defmethod do-new-connection (socket (tls (eql :tls)) (dispatch-method (eql :async-custom)))
   "Handle new connections using TLS-SERVE above."
@@ -384,10 +404,13 @@ Read if you can, write if you can, announce DONE when done."
                                         ; we want to skip
   )
 
+
+
 ;;;; HTTP2 TLS async client
 (defun on-complete-ssl-data (ssl octets fn)
   "Read exactly OCTETS octets from SSL to VEC.
-Raise error if only part of data is available."
+
+Raise error if only part of data is available. FIXME: process that anyway"
   (let ((vec (make-shareable-byte-vector +client-preface-length+)))
     (with-pointer-to-vector-data (buffer vec)
       (let ((read (ssl-read ssl buffer octets)))
@@ -439,3 +462,34 @@ Raise error if only part of data is available."
               (when (zerop count)
                 (setf (client-io-on-read client) #'process-header)
                 (process-header client))))))))
+
+
+;;;; version with async
+(defmethod do-new-connection (socket (tls (eql :v3)) (dispatch-method (eql :async)))
+  "Handle new connections using cl-async event loop.
+
+Pros: This version can be run in one thread and process many clients.
+
+Cons: requires a specific C library, and the implementation as-is depends on
+SBCL internal function - we re-use the file descriptor of socket created by
+usocket package, as otherwise access to the port of server is complicated."
+  (let ((ctx (make-ssl-context))
+        (s-mem (bio-s-mem)))
+    (cl-async:start-event-loop
+     (lambda ()
+       (cl-async:tcp-server nil nil
+                            (lambda (socket bytes)
+                              (with-pointer-to-vector-data (p bytes)
+                                (decrypt-socket-octets (cl-async:socket-data socket)
+                                                       p
+                                                       (length bytes))
+                                (let* ((client (cl-async:socket-data socket))
+                                       (concated (concatenate* (client-write-buf client))))
+                                  (cl-async:write-socket-data  socket concated))))
+                            :connect-cb (lambda (socket)
+                                          (setf (cl-async:socket-data socket)
+                                                (make-client-object socket ctx s-mem)))
+                            :event-cb (lambda (err) (format t "--> ~s~%" err))
+                            :fd (sb-bsd-sockets:socket-file-descriptor
+                                 (usocket:socket socket))))))
+  (invoke-restart 'kill-server))
