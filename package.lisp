@@ -1,9 +1,14 @@
-;;;; package.lisp
-;;
-;;;; Copyright (c) 2023 Tomáš Zellerin <tomas@zellerin.cz>
+;;;; Copyright (c) 2023, 2024 Tomáš Zellerin <tomas@zellerin.cz>
+
 (mgl-pax:define-package #:tls-server
-  (:use #:cl #:mgl-pax)
-  (:export #:@index #:@overview))
+    (:use #:cl #:mgl-pax)
+  (:export #:@index #:@overview)
+  (:documentation
+   "Exports CREATE-SERVER (needed to invoke a server),
+DO-NEW-CONNECTION (specialized to implement particular servers), and various
+restarts. See @SERVER-ACTIONS.
+
+Also holds the top-level documentation sectins, @INDEX and @OVERVIEW."))
 
 (in-package #:tls-server)
 
@@ -32,7 +37,7 @@
   (:use #:cl #:tls-server/mini-http2 #:tls-server #:tls-server/utils))
 
 (define-package #:tls-server/async
-  (:use #:cl #:tls-server/mini-http2 #:tls-server/mini-http2)
+  (:use #:cl #:tls-server/mini-http2 #:tls-server/mini-http2 #:tls-server)
   (:import-from #:cl-async #:socket-data #:write-socket-data #:close-socket
                 #:start-event-loop #:tcp-server))
 
@@ -52,9 +57,9 @@ So this repository implements:
 - very simplified (and indeed incorrect in more than few ways) server side of HTTP/2
 - protocol, and based of that several versions of TCP server that accept and
 - handle the request."
+  (tls-server::@server-actions section)
   (tls-server/utils::@octets section)
   (tls-server/mini-http2::@http2-protocol section)
-  (tls-server/mini-http2::@server-actions section)
   (tls-server/mini-http2::@tls section)
   (tls-server/synchronous::@synchronous section)
   (tls-server/mini-http2::@use-http2-lib section)
@@ -73,5 +78,4 @@ So this repository implements:
 
 - very simplified (and indeed incorrect in more than few ways) server side of HTTP/2
 - protocol, and based of that several versions of TCP server that accept and
-- handle the request."
-)
+- handle the request.")

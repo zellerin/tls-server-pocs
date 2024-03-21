@@ -11,7 +11,7 @@
   :serial t
   :in-order-to ((asdf::test-op (asdf:test-op "tls-server/test")))
   :depends-on ("cl+ssl" "usocket" "bordeaux-threads" "mgl-pax" "puri" "http2"
-                        "cl-async-ssl")
+                        "cl-async-ssl" "cffi")
   :defsystem-depends-on ("cffi-grovel")
   :components ((:file "package")
                (:file "server")
@@ -22,7 +22,7 @@
                (:file "with-http2-lib")
                (:file "uv")
                (:cffi-grovel-file "async-grovel")
-               (:file "async-test")))
+               (:file "async-cffi")))
 
 (defsystem #:tls-server/test
   :depends-on ("tls-server" "fiasco" "cl-ppcre" "puri" "http2/client")

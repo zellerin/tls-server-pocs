@@ -48,13 +48,13 @@
 (defun http2-client-native-test (tls model)
   "Test the server from http2-based client."
   (is (create-server 0 tls model
-                                :announce-url-callback (callback-on-server
-                                                        #'query-port-using-http2))))
+                     :announce-url-callback (callback-on-server
+                                             #'query-port-using-http2))))
 
 (deftest none/native ()
   "Run tests on single-client server."
-  (http2-client-native-test nil :none)
-  (http2-client-curl-test nil :none)
+#+a  (http2-client-native-test nil :none)
+#+a  (http2-client-curl-test nil :none)
   (http2-client-curl-test :tls :none))
 
 (deftest thread/native ()

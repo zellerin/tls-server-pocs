@@ -5,7 +5,7 @@
 here is is as follows. This should be sufficient to respond to a browser, curl
 or h2load."
   (+client-preface-start+ variable)
-  (+client-preface-length+ constant)
+  (+client-preface-length+ mgl-pax:constant)
   (read-client-preface function)
   (*settings-frame* variable)
   (*ack-frame* variable)
