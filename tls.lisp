@@ -3,11 +3,11 @@
 (mgl-pax:defsection @tls (:title "TLS")
   "HTTP/2 is deeply connected with \\TLS. This interaction is represented with
 function WRAP-TO-TLS"
+  (make-http2-tls-context function)
   (wrap-to-tls function)
   (*http2-tls-context* variable)
-  (make-http2-tls-context function)
-                                        ; Note & TODO: no object for cffi callbacks
-  #+nil(select-h2-callback function))
+
+  (select-h2-callback tls-server/utils::callback))
 
 (cl+ssl::define-ssl-function ("SSL_CTX_set_alpn_select_cb" ssl-ctx-set-alpn-select-cb)
   :void
@@ -16,7 +16,7 @@ function WRAP-TO-TLS"
 
 (defconstant +SSL-CTRL-SET-READ-AHEAD+ 41)
 
-(cffi:defcallback select-h2-callback
+(define-documented-callback select-h2-callback
     :int
     ((ssl :pointer)
      (out (:pointer (:pointer :char)))
@@ -24,9 +24,12 @@ function WRAP-TO-TLS"
      (in (:pointer :char))
      (inlen :int)
      (args :pointer))
-  ;; this is basically reimplemented SSL_select_next_proto, but easier than to
-  ;; use that one in ffi world.
-  "Set ALPN to h2 if it was offered, otherwise to the first offered."
+  "To be used as a callback in ssl-ctx-set-alpn-select-cb.
+
+Chooses h2 as ALPN if it was offered, otherwise the first offered.
+
+This is basically reimplemented SSL_select_next_proto, but easier than to
+use that one in ffi world."
   (declare (ignore args ssl))
   (loop for idx = 0 then (+ (cffi:mem-ref in :char idx) idx)
         while (< idx inlen)

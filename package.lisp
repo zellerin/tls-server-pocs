@@ -63,6 +63,7 @@ So this repository implements:
   (tls-server/mini-http2::@use-http2-lib section)
   (tls-server/async::@async  section)
   (tls-server/async/tls::@async-server section)
+  (tls-server/utils::@mgl-extensions section)
   (@packages section))
 
 (defsection @overview

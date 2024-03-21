@@ -92,7 +92,7 @@ later this data are processed by DO-ENCRYPT and after encryption are buffered in
 
 This includes public and private key pair (from files in this directory),
 
-FIXME: We should not need both this and TLS-SERVER/MINI-HTTP2:MAKE-HTTP2-TLS-CONTEXT"
+FUnctionally, it is same as TLS-SERVER/MINI-HTTP2:MAKE-HTTP2-TLS-CONTEXT; however, it used directly cffi and sets some parameters in a different way."
   (let ((context (ssl-ctx-new (tls-method)))
         (*default-pathname-defaults*
           (asdf:component-pathname (asdf:find-system "tls-server"))))
