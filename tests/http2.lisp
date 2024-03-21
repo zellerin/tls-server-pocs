@@ -56,7 +56,7 @@
              (funcall (callback-on-server
                        (lambda (a)
                          (handler-bind
-                             ((error (lambda (e) (invoke-restart 'tls-server/mini-http2::kill-parent))))
+                             ((error (lambda (e) (invoke-restart 'kill-parent))))
                            (error "An error"))))
                       "http://foo/")
              (sleep 10)

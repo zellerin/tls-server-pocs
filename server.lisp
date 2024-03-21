@@ -8,8 +8,12 @@ server types implement appropriate methods to ensure desired behaviour."
   (do-new-connection generic-function)
   (kill-server restart)
   (kill-server function)
+  (kill-parent restart)
+  (go-away restart)
   (callback-on-server function)
-  (url-from-socket function))
+  (url-from-socket function)
+  ;; TODO: remove/fix
+  (*buffer* variable))
 
 (defun create-server (port tls dispatch-method
                       &key
@@ -57,3 +61,40 @@ for new dispatch methods.
 
 TLS is either NIL or :TLS. Note that when using HTTP/2 without TLS, most clients have to be instructed to
 use tls - e.g., --http2-prior-knowledge for curl."))
+
+(defun callback-on-server (fn &key (thread-name "Test client for a server"))
+  "Return a function that takes one parameter, URL, as a parameter and calls FN on
+it in a separate thread. Then it kills the server by invoking KILL-SERVER restart.
+
+This is to be used as callback on an open server for testing it."
+  (lambda (url)
+    (let ((parent (bt:current-thread)))
+      (bt:make-thread
+       (lambda ()
+         (bt:interrupt-thread parent #'kill-server
+                              (with-simple-restart (kill-parent "Kill parent")
+                                (funcall fn url))))
+       :name thread-name))))
+
+(defun kill-server (&optional res)
+  "Kill server by invoking KILL-SERVER restart, if it exists."
+  (let ((restart
+          (find-restart 'kill-server)))
+    (if restart
+        (invoke-restart restart res))))
+
+(mgl-pax:define-restart kill-server (&optional value)
+  "Restart established in CREATE-SERVER that can be invoked to terminate the server
+properly and return VALUE.")
+
+(mgl-pax:define-restart kill-parent (&optional value)
+  "Restart established in CREATE-SERVER that TODO")
+
+;;;; TODO: document and review
+(mgl-pax:define-restart go-away (&optional value)
+  "Restart established in XXX
+properly and return VALUE.")
+
+(defvar *buffer* nil
+  "Preallocated buffer for reading from stream. This is initialized for each
+connection depending on the dispatch method.")

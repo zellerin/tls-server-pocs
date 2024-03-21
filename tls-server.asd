@@ -37,6 +37,5 @@
   :pathname "tests"
   :components ((:file "package")
                (:file "utils")
-               (:file "timing")
                (:file "client")
                (:file "http2")))

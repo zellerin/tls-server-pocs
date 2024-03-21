@@ -23,8 +23,7 @@ implementations, as it uses standard libraries - bordeaux-threads, cl+ssl and
 usocket."
   (do-new-connection (method () (t t (eql :thread))))
   (do-connection function)
-  (go-away restart)
-  (*buffer* variable))
+  (go-away restart))
 
 (defun read-frame-check-end-stream (stream)
   "Read a frame and check whether it is an end stream name. If so, return the
@@ -52,7 +51,7 @@ Check header constrains to some extent."
 Terminate if either SSL error occurs, or GO-AWAY restart is invoked."
   (restart-case
       (handler-case
-          (let ((*buffer*  (make-array 16385
+          (let ((*buffer* (make-array 16385
                                        :element-type '(unsigned-byte 8)
                                        :initial-element 0)))
             (read-client-preface stream)

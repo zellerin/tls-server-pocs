@@ -35,19 +35,19 @@
   "Test the server using curl."
   (dolist (tls '(nil :tls))
     (dolist (model '(:none :thread #+nil :poll))
-      (is (tls-server/mini-http2:create-server 0 nil model
+      (is (create-server 0 nil model
                                     :announce-url-callback (callback-on-server
                                                             #'query-port-using-curl))))))
 
 (defun http2-client-curl-test (tls model)
   "Test the server using curl."
-  (is (tls-server/mini-http2:create-server 0 tls model
+  (is (create-server 0 tls model
                                 :announce-url-callback (callback-on-server
                                                         #'query-port-using-curl))))
 
 (defun http2-client-native-test (tls model)
   "Test the server from http2-based client."
-  (is (tls-server/mini-http2:create-server 0 tls model
+  (is (create-server 0 tls model
                                 :announce-url-callback (callback-on-server
                                                         #'query-port-using-http2))))
 

@@ -102,8 +102,8 @@ This is a simple wrapper over CL+SSL."
 
 (defun read-tls-vector (buf stream start end)
   (declare (optimize speed)
-           (tls-server/mini-http2:frame-size start end)
-           (tls-server/mini-http2:octet-vector buf))
+           (frame-size start end)
+           (tls-server/utils:octet-vector buf))
   (let ((handle (cl+ssl::ssl-stream-handle stream)))
     (handler-case
         (cffi:with-pointer-to-vector-data (ptr buf)

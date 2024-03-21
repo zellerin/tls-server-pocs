@@ -421,7 +421,7 @@ Raise error if only part of data is available. FIXME: process that anyway"
           (t (funcall fn vec)))))))
 
 (defun process-client-hello (client)
-  (on-complete-ssl-data (client-ssl client)  +client-preface-length+
+  (on-complete-ssl-data (client-ssl client) +client-preface-length+
                         (lambda (vec)
                           (cond ((equalp vec +client-preface-start+)
                                  (send-unencrypted-bytes client tls-server/mini-http2::*settings-frame*)

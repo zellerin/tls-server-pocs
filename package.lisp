@@ -8,11 +8,15 @@
 (in-package #:tls-server)
 
 (define-package #:tls-server/utils
-  (:use #:cl #:mgl-pax))
+  (:use #:cl #:mgl-pax
+        ;; TODO: just go-away restart...
+        #:tls-server))
 
 (define-package #:tls-server/mini-http2
-  (:use #:cl)
-  (:export #:go-away
+  (:use #:cl #:tls-server/utils
+        ;; TODO: just buffer needed
+        #:tls-server)
+#+nil  (:export #:go-away
            #:*settings-frame* #:*ack-frame* #:*header-frame* #:*data-frame*
            #:buffer-with-changed-stream #:get-frame-size #:get-stream-id
            #:get-stream-id-if-ends
@@ -25,7 +29,7 @@
    "Basic functionality for low-level HTTP2 implementation."))
 
 (define-package #:tls-server/synchronous
-  (:use #:cl #:tls-server/mini-http2 #:tls-server))
+  (:use #:cl #:tls-server/mini-http2 #:tls-server #:tls-server/utils))
 
 (define-package #:tls-server/async
   (:use #:cl #:tls-server/mini-http2 #:tls-server/mini-http2)
@@ -33,8 +37,7 @@
                 #:start-event-loop #:tcp-server))
 
 (define-package #:tls-server/async/tls
-  (:use #:cl #:tls-server/mini-http2 #:cffi
-        #:tls-server))
+  (:use #:cl #:tls-server/mini-http2 #:cffi #:tls-server))
 
 (defsection @index
     (:title "Experiments with HTTP/2 server")

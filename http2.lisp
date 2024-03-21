@@ -5,13 +5,16 @@
 here is is as follows. This should be sufficient to respond to a browser, curl
 or h2load."
   (+client-preface-start+ variable)
+  (+client-preface-length+ constant)
   (read-client-preface function)
   (*settings-frame* variable)
   (*ack-frame* variable)
   (stream-id type)
   (*data-frame* variable)
+  (*header-frame* variable)
   (+goaway-frame-type+ variable)
   (get-frame-size function)
+  (frame-size type)
   (get-stream function)
   (get-stream-id function)
   (get-frame-type function)
@@ -60,10 +63,6 @@ particular stream. Each stream is a 23 bit integer."
 (deftype frame-size ()
   "Frame size parameter can be 32 bits long; however, values above 2^14 are an error."
   '(unsigned-byte 32))
-
-(defvar *buffer* nil
-  "Preallocated buffer for reading from stream. This is initialized for each
-connection depending on the dispatch method.")
 
 (defun read-client-preface (stream)
   (fully-read-array stream *buffer* +client-preface-length+)
@@ -121,32 +120,3 @@ connection depending on the dispatch method.")
     (wrap-to-tls socket))
   (:method (socket (tls (eql nil)))
     (usocket:socket-stream socket)))
-
-(mgl-pax:define-restart kill-server (&optional value)
-  "Restart established in CREATE-SERVER that can be invoked to terminate the server
-properly and return VALUE.")
-
-(mgl-pax:define-restart go-away (&optional value)
-  "Restart established in CREATE-SERVER that can be invoked to terminate the server
-properly and return VALUE.")
-
-(defun kill-server (&optional res)
-  "Kill server by invoking KILL-SERVER restart, if it exists."
-  (let ((restart
-          (find-restart 'kill-server)))
-    (if restart
-        (invoke-restart restart res))))
-
-(defun callback-on-server (fn &key (thread-name "Test client for a server"))
-  "Return a function that takes one parameter, URL, as a parameter and calls FN on
-it in a separate thread. Then it kills the server by invoking KILL-SERVER restart.
-
-This is to be used as callback on an open server for testing it."
-  (lambda (url)
-    (let ((parent (bt:current-thread)))
-      (bt:make-thread
-       (lambda ()
-         (bt:interrupt-thread parent #'kill-server
-                              (with-simple-restart (kill-parent "Kill parent")
-                                (funcall fn url))))
-       :name thread-name))))
