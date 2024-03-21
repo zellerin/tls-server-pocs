@@ -150,13 +150,13 @@ usocket package, as otherwise access to the port of server is complicated."
   (let ((ctx (mini-http2::make-http2-tls-context)))
     (start-event-loop
      (lambda ()
-       (print (cl-async-ssl:tcp-ssl-server nil nil
-                                           #'callback
-                                           :connect-cb #'on-connect
-                                           :ssl-ctx ctx
-                                           :event-cb (lambda (err) (format t "--> ~s~%" err))
-                                           :fd (sb-bsd-sockets:socket-file-descriptor
-                                                (usocket:socket socket)))))))
+       (cl-async-ssl:tcp-ssl-server nil nil
+                                            #'callback
+                                            :connect-cb #'on-connect
+                                            :ssl-ctx ctx
+                                            :event-cb (lambda (err) (format t "--> ~s~%" err))
+                                            :fd (sb-bsd-sockets:socket-file-descriptor
+                                                 (usocket:socket socket))))))
   (invoke-restart 'kill-server)   ; there is an outer loop in create-server that
                                         ; we want to skip
   )
