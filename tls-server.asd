@@ -4,10 +4,10 @@
 
 
 (asdf:defsystem #:tls-server
-  :description "Describe tls-server here"
+  :description "Various implementations of toy HTTP2 server."
   :author "Tomáš Zellerin <tomas@zellerin.cz>"
   :license  "MIT"
-  :version "0.0.1"
+  :version "0.9"
   :serial t
   :in-order-to ((asdf::test-op (asdf:test-op "tls-server/test")))
   :depends-on ("cl+ssl" "usocket" "bordeaux-threads" "mgl-pax" "puri" "http2"

@@ -106,4 +106,6 @@ details of the implementations."
   "Improve backpressure"
   "See TODO: and FIXME: in the code"
   "Add measurement points and tunables (probably using (clip)[https://github.zellerin.cz/clip-1.4]"
-  "Do some measurements for real clients and specific cases")
+  "Do some measurements for real clients and specific cases"
+  "Add test cases and name existing ones better ![](images/fiasco.png)"
+  "Try Quic/HTTP3")
