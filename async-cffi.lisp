@@ -53,12 +53,17 @@
 (mgl-pax:defsection @request-handling
     (:title "Communication setup")
   "When POLL returns, each client is tested by PROCESS-CLIENT-FD whether read (or
-write is possible). If so, DO-SOCK-READ is called to read the data, DECRYPT-SOCKET-OCTETS decrypts them, and calls a callback (slot IO-ON-READ of the client) to process them.
+write is possible). If so, DO-SOCK-READ is called to read the data,
+DECRYPT-SOCKET-OCTETS decrypts them, and calls a callback (slot IO-ON-READ of
+the client) to process them.
 
-The application defined callback reads the data using SSL-READ, processes them, and sends response with SEND-UNENCRYPTED-BYTES.
+The application defined callback reads the data using SSL-READ, processes them,
+and sends response with SEND-UNENCRYPTED-BYTES.
 
 SEND-UNENCRYPTED-BYTES feeds data to a client buffer (slot ENCRYPT-BUF), and
-later this data are processed by DO-ENCRYPT and after encryption are buffered in WRITE-BUF of the client. These data are sent to the client socket eventually by DO-SOCK-WRITE called from PROCESS-CLIENT-FD on the callback."
+later this data are processed by DO-ENCRYPT and after encryption are buffered in
+WRITE-BUF of the client. These data are sent to the client socket eventually by
+DO-SOCK-WRITE called from PROCESS-CLIENT-FD on the callback."
   (process-client-fd function)
   (process-data-on-socket function)
   (decrypt-socket-octets function)
@@ -88,11 +93,12 @@ later this data are processed by DO-ENCRYPT and after encryption are buffered in
         (error "~a (Failed processing ~a)" error path)))))
 
 (defun make-ssl-context ()
-  "Make a SSL context.
+  "Make a SSL context for http2 server..
 
 This includes public and private key pair (from files in this directory),
 
-FUnctionally, it is same as TLS-SERVER/MINI-HTTP2:MAKE-HTTP2-TLS-CONTEXT; however, it used directly cffi and sets some parameters in a different way."
+Functionally, it is same as TLS-SERVER/MINI-HTTP2:MAKE-HTTP2-TLS-CONTEXT;
+however, it used directly cffi and sets some parameters in a different way."
   (let ((context (ssl-ctx-new (tls-method)))
         (*default-pathname-defaults*
           (asdf:component-pathname (asdf:find-system "tls-server"))))
@@ -407,49 +413,52 @@ Read if you can, write if you can, announce DONE when done."
 
 
 ;;;; HTTP2 TLS async client
-(defun on-complete-ssl-data (ssl octets fn)
+(defun on-complete-ssl-data (client octets fn)
   "Read exactly OCTETS octets from SSL to VEC.
 
 Raise error if only part of data is available. FIXME: process that anyway"
-  (let ((vec (make-shareable-byte-vector +client-preface-length+)))
+  (let ((vec (make-shareable-byte-vector +client-preface-length+))
+        (ssl (client-ssl client)))
     (with-pointer-to-vector-data (buffer vec)
       (let ((read (ssl-read ssl buffer octets)))
         (cond
           ((not (plusp read)))          ; just return and try again
           ((/= read octets)
            (error "Read ~d octets. This is not enough octets, why?~%~s~%" read (subseq vec 0 read)))
-          (t (funcall fn vec)))))))
+          (t (funcall fn client vec)))))))
+
+(defun process-client-hello* (client vec)
+  (cond ((equalp vec +client-preface-start+)
+         (send-unencrypted-bytes client tls-server/mini-http2::*settings-frame*)
+         (send-unencrypted-bytes client tls-server/mini-http2::*ack-frame*)
+         (setf (client-io-on-read client) #'process-header))
+        (t
+         (error 'client-preface-mismatch :received vec))))
 
 (defun process-client-hello (client)
-  (on-complete-ssl-data (client-ssl client) +client-preface-length+
-                        (lambda (vec)
-                          (cond ((equalp vec +client-preface-start+)
-                                 (send-unencrypted-bytes client tls-server/mini-http2::*settings-frame*)
-                                 (send-unencrypted-bytes client tls-server/mini-http2::*ack-frame*)
-                                 (setf (client-io-on-read client) #'process-header))
-                                (t
-                                 (error "Client preface incorrect. Does client send http2?~%~s~%" vec))))))
+  (on-complete-ssl-data client +client-preface-length+ #'process-client-hello*))
+
+(defun process-header* (client header)
+  (let* ((frame-size (get-frame-size header))
+         (type (get-frame-type header)))
+    (declare ((unsigned-byte 8) type)
+             (frame-size frame-size))
+    (when (= type +goaway-frame-type+)
+      ;; TODO: handle go-away frame
+      )
+    (unless (>= 16384 frame-size)
+      (error  "Too big header! go-away"))
+    (let ((id-to-process (get-stream-id-if-ends header)))
+      (when id-to-process
+        (send-unencrypted-bytes client
+                                (buffer-with-changed-stream *header-frame* id-to-process))
+        (send-unencrypted-bytes client
+                                (buffer-with-changed-stream *data-frame* id-to-process))))
+    (setf (client-io-on-read client) (ignore-bytes frame-size))
+    (funcall (client-io-on-read client) client)))
 
 (defun process-header (client)
-  (on-complete-ssl-data (client-ssl client) 9
-                        (lambda (header)
-                          (let* ((frame-size (get-frame-size header))
-                                 (type (get-frame-type header)))
-                            (declare ((unsigned-byte 8) type)
-                                     (frame-size frame-size))
-                            (when (= type +goaway-frame-type+)
-                              ;; TODO: handle go-away frame
-                              )
-                            (unless (>= 16384 frame-size)
-                              (error  "Too big header! go-away"))
-                            (let ((id-to-process (get-stream-id-if-ends header)))
-                              (when id-to-process
-                                (send-unencrypted-bytes client
-                                                        (buffer-with-changed-stream *header-frame* id-to-process))
-                                (send-unencrypted-bytes client
-                                                        (buffer-with-changed-stream *data-frame* id-to-process))))
-                            (setf (client-io-on-read client) (ignore-bytes frame-size))
-                            (funcall (client-io-on-read client) client)))))
+  (on-complete-ssl-data client 9 #'process-header*))
 
 (defun ignore-bytes (count)
   (if (zerop count)
