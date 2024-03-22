@@ -62,9 +62,15 @@ Terminate if either SSL error occurs, or GO-AWAY restart is invoked."
               when stream-to-send-response
                 do
                    (send-response stream stream-to-send-response)))
+        ;; There are some errors that are OK.
+        (cl+ssl::ssl-error-ssl (e)
+          (if (search "unexpected eof while reading" (cl+ssl::printed-queue e))
+              (invoke-restart 'go-away)
+              (error e)))
         (cl+ssl::ssl-error (e)
           ;; ended by ssl error
-          (unless (member (type-of e) '(cl+ssl::ssl-error-syscall))
+          (unless (member (type-of e)
+                          '(cl+ssl::ssl-error-syscall))
             (error e)))
         (stream-error (e)
           (unless (member (type-of e) '(sb-int:broken-pipe))
