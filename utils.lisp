@@ -1,13 +1,13 @@
-(in-package mini-http2)
+(in-package tls-server/utils)
 
-(mgl-pax:defsection @octets ()
+(mgl-pax:defsection @octets (:title "Work with octets")
     "Simplify work with octet vectors"
   (octet-vector type)
   (octetize function)
   (fully-read-array function))
 
 (deftype octet-vector ()
-  "Simple (i.e., not adjustable and w/o fill pointer) onedimensional array of
+  "Simple (i.e., not adjustable and w/o fill pointer) one-dimensional array of
 octets"
   '(simple-array (unsigned-byte 8) (*)))
 
@@ -25,58 +25,54 @@ EOF, and we rely on that; if this happens, invoke GO-AWAY restart."
     vector))
 
 (defun octetize (array)
-  "Make a simple onedimensional array of same content as ARRAY."
+  "Make a simple one-dimensional array of octets with same content as ARRAY."
   (make-array (length array) :element-type '(unsigned-byte 8)
                              :initial-contents array))
 
-(mgl-pax:defsection @tracing ()
-  "SBCL allows trace to call an arbitraty function. We use this to store traces to
-an array that can be analysed later."
-  (with-tracing macro))
+(mgl-pax:defsection @mgl-extensions (:title "New locatives")
+    "Define a  locative to document CFFI callbacks."
+  (define-documented-callback mgl-pax:macro)
+  (callback mgl-pax:locative))
 
-(defvar *log-classes* '(:always))
-(defvar *log-events* (make-array 10 :fill-pointer 0 :adjustable t)
-  "Array of events")
 
-(defstruct (trace-item (:print-function print-trace-item)) real-time cpu-time fn-name depth keyword values)
+(defclass callback ()
+  ((name :accessor get-name :initarg :name)
+   (args :accessor get-args :initarg :args)
+   (docstring :accessor get-docstring :initarg :docstring))
+  (:documentation "CFFI callbacks information."))
 
-(defvar *real-time-0* nil)
-(defvar *cpu-time-0* nil)
-(defun print-trace-item (item stream level)
-  (when (or (null *print-level*)
-            (< level *print-level*))
-    (format stream "~@[~f~] ~@[~f~] ~a ~a ~a~%"
-            (when *real-time-0* (round (- (trace-item-real-time item) *real-time-0*) (/ internal-time-units-per-second 1000)))
-            (when *cpu-time-0* (round (- (trace-item-cpu-time item) *cpu-time-0*) (/ internal-time-units-per-second 1000)))
-            (trace-item-fn-name item)
-            (trace-item-values item)
-            (trace-item-keyword item))))
+(defvar *callbacks* (make-hash-table :test 'eq))
 
-(defun do-log (depth fn-name keyword stack values)
-  (declare (ignore stack))
-  (vector-push-extend
-   (make-trace-item :real-time (get-internal-real-time)
-                    :cpu-time (get-internal-run-time)
-                    :fn-name fn-name
-                    :depth depth
-                    :keyword keyword
-                    :values values)
-   *log-events*))
+(defun dref-to-callback (dref)
+  (gethash (dref-ext:dref-name dref) *callbacks*))
 
-(defmacro trace-by-log (&rest fns)
-  `(trace :report do-log ,@fns))
+(defmacro define-documented-callback (name res-type args docstring &body body)
+  "Wrapper on CFFI:DEFCALLBACK that also tracks the args and docstrings."
+  (check-type docstring string)
+  `(progn
+     (setf (gethash ',name *callbacks*)
+           (make-instance 'callback :name ',name :args ',args :docstring ,docstring))
+     (cffi:defcallback ,name ,res-type ,args ,docstring ,@body)))
 
-(defmacro with-tracing (fns &body body)
-  `(let ((*log-events* (make-array 10 :fill-pointer 0 :adjustable t)))
-    (trace :report do-log ,@fns)
-     (unwind-protect
-          (restart-case
-              (progn ,@body)
-            (dump-traces ()
-              *log-events*))
-       (untrace ,@fns))
-     *log-events*))
+(dref-ext:define-locative-type callback ()
+  "CFFI callback is a Lisp code that can be called from C.")
 
-(defun make-doc ()
-  (mgl-pax:update-asdf-system-html-docs mini-http2::@http2-server-pocs "tls-server")
-  (mgl-pax:update-asdf-system-readmes mini-http2::@http2-server-pocs "tls-server"))
+(dref-ext:define-definition-class callback callback-dref)
+
+(defmethod dref-ext:locate* ((object callback))
+  (make-instance 'callback-dref :name (get-name object) :locative 'callback))
+
+(defmethod dref-ext:dref* (symbol (locative-type (eql 'callback)) locative-args)
+  (unless (and (symbolp symbol)
+               (gethash symbol *callbacks*))
+    (dref-ext:locate-error "~S does not name a callback (not in table)." symbol))
+  (make-instance 'callback-dref :name symbol :locative 'callback))
+
+(defmethod dref-ext:resolve* ((dref callback-dref))
+  (dref-to-callback dref))
+
+(defmethod dref-ext:docstring* ((callback callback-dref))
+  (get-docstring (dref-to-callback callback)))
+
+(defmethod dref-ext:arglist* ((callback callback-dref))
+  (mapcar 'car (get-args  (dref-to-callback callback))))

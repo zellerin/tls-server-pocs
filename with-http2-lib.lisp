@@ -1,9 +1,9 @@
-(in-package mini-http2)
+(in-package tls-server/mini-http2)
 
 (mgl-pax:defsection @use-http2-lib
     (:title "Server built using HTTP2 package.")
   "Server implementations so far used the simplified HTTP/2 protocol described
-[above][mini-http2::@http2-protocol]. Now we do the same using
+[above][tls-server/mini-http2::@http2-protocol]. Now we do the same using
 [HTTP2][asdf/system:system], still synchronously to compare the ease of
 implementation and speed."
   (do-new-connection (method () (t t (eql :none/http2)))))
@@ -52,8 +52,10 @@ Terminate if either SSL error occurs, or go-away restart is invoked."
     (go-away ())))
 
 (defmethod do-new-connection (listening-socket tls (dispatch-method (eql :none/http2)))
-  "Handle the connection while doing nothing else using HTTP2 asdf library for actual work. Otherwise it is same as the :NONE method (i.e., serving a single client)"
+  "Handle the connection while doing nothing else using HTTP2 asdf library for
+actual work. Otherwise it is same as the :NONE method (i.e., serving a single
+client at time)."
 
   (usocket:with-connected-socket (plain (usocket:socket-accept listening-socket
                                                                :element-type '(unsigned-byte 8)))
-    (do-connection/2 (get-stream plain tls))))
+    (do-connection/2 (maybe-add-tls plain tls))))
