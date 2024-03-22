@@ -52,9 +52,9 @@ different choices.
 
 So this repository implements:
 
-- very simplified (and indeed incorrect in more than few ways) server side of HTTP/2
-- protocol, and based of that several versions of TCP server that accept and
-- handle the request."
+- very simplified (and indeed incorrect in more than few ways) server side of
+  HTTP/2 protocol, and based of that
+- several versions of TCP server that accept and handle the request."
   (tls-server::@server-actions section)
   (tls-server/utils::@octets section)
   (tls-server/mini-http2::@http2-protocol section)
@@ -77,5 +77,5 @@ different choices.
 So this repository implements:
 
 - very simplified (and indeed incorrect in more than few ways) server side of HTTP/2
-- protocol, and based of that several versions of TCP server that accept and
-- handle the request.")
+- protocol, and based of that several versions of TCP server that accept and handle the request."
+  (create-server function))
