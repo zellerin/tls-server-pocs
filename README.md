@@ -141,7 +141,7 @@ Improve backpressure
 
 See TODO: and FIXME: in the code
 
-Add measurement points and tunables (probably using [clip](https://github.zellerin.cz/clip-1.4)
+Add measurement points and tunables (probably using [clip](https://github.com/zellerin/clip-1.4/))
 
 Do some measurements for real clients and specific cases
 
