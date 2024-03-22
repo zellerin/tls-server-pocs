@@ -55,9 +55,7 @@ This is to be used as callback fn on an open server for testing it."
 new (possibly tls) connection to the LISTENING-SOCKET and start handling it
 using DISPATCH-METHOD.
 
-DISPATCH-METHOD can presently be either :NONE, :NONE/HTTP2, :THREAD or
-:ASYNC (w/o TLS only for now), see appropritate methods. Methods can be created
-for new dispatch methods.
+See @IMPLEMENTATIONS for available DISPATCH-METHOD.
 
 TLS is either NIL or :TLS. Note that when using HTTP/2 without TLS, most clients have to be instructed to
 use tls - e.g., --http2-prior-knowledge for curl."))
