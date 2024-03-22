@@ -18,7 +18,11 @@ So this repository implements:
 
 - several versions of TCP server that accept and handle the request.
 
-All the server implementations can be started with [`CREATE-SERVER`][dd5c]. New server types with same interface are defined by specializing [`DO-NEW-CONNECTION`][2ab2].
+All the server implementations can be started with [`CREATE-SERVER`][dd5c]. New server
+types with same interface are defined by specializing [`DO-NEW-CONNECTION`][2ab2]
+
+See also (additional documentation)\[https://docs.zellerin.cz/tls-server-poc\] for
+details of the implementations.
 
 <a id="x-28TLS-SERVER-3ACREATE-SERVER-20FUNCTION-29"></a>
 
@@ -62,12 +66,12 @@ Following implementations are defined:
 
     Handle the connection while doing nothing else.
     
-    Serve just one cliet at time: on connection, read the requests and handle them as they
-    arrive. When the client sends go-away frame, close connection and be ready
-    to serve another client.
+    Serve just one client at time: when it connects, read the incoming requests and
+    handle them as they arrive. When the client sends go-away frame, close the
+    connection and be ready to serve another client.
     
-    Obviously, there is little overhead and this version is actually pretty fast,
-    especially with request pilelining.
+    Obviously, there is little overhead and this version is actually pretty fast -
+    for one client and in ideal conditions (especially with request pilelining).
 
 <a id="x-28TLS-SERVER-3ADO-NEW-CONNECTION-20-28METHOD-20NIL-20-28T-20T-20-28EQL-20-3ATHREAD-29-29-29-29"></a>
 

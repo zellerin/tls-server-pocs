@@ -80,8 +80,12 @@ So this repository implements:
 - very simplified (and indeed incorrect in more than few ways) server side of HTTP/2 protocol, and based of that
 - several versions of TCP server that accept and handle the request.
 
-All the server implementations can be started with CREATE-SERVER. New server types with same interface are defined by specializing DO-NEW-CONNECTION."
+All the server implementations can be started with CREATE-SERVER. New server
+types with same interface are defined by specializing DO-NEW-CONNECTION"
+  "See also (additional documentation)[https://docs.zellerin.cz/tls-server-poc] for
+details of the implementations."
   (create-server function)
+  (do-new-connection generic-function)
   (@implementations section))
 
 (defsection @implementations

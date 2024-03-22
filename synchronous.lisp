@@ -80,12 +80,12 @@ Terminate if either SSL error occurs, or GO-AWAY restart is invoked."
 (defmethod do-new-connection (listening-socket tls (dispatch-method (eql :none)))
   "Handle the connection while doing nothing else.
 
-Serve just one cliet at time: on connection, read the requests and handle them as they
-arrive. When the client sends go-away frame, close connection and be ready
-to serve another client.
+Serve just one client at time: when it connects, read the incoming requests and
+handle them as they arrive. When the client sends go-away frame, close the
+connection and be ready to serve another client.
 
-Obviously, there is little overhead and this version is actually pretty fast,
-especially with request pilelining."
+Obviously, there is little overhead and this version is actually pretty fast -
+for one client and in ideal conditions (especially with request pilelining)."
 
   (usocket:with-connected-socket (plain (usocket:socket-accept listening-socket
                                                                :element-type '(unsigned-byte 8)))
