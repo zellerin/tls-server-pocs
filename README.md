@@ -5,6 +5,7 @@
 ## Table of Contents
 
 - [1 Implementations][335b]
+- [2 Bugs and considered improvements][2da8]
 
 ###### \[in package TLS-SERVER\]
 I wanted to play with different options for HTTP/2 server implementations. While
@@ -77,13 +78,16 @@ Following implementations are defined:
 
 - [method] **DO-NEW-CONNECTION** *LISTENING-SOCKET TLS (DISPATCH-METHOD (EQL :THREAD))*
 
-    Handle the connection in a new thread.
+    Handle the connection in a new dedicated thread. This is a method that is used,
+    e.g., by Hunchentoot.
 
 <a id="x-28TLS-SERVER-3ADO-NEW-CONNECTION-20-28METHOD-20NIL-20-28T-20T-20-28EQL-20-3ANONE-2FHTTP2-29-29-29-29"></a>
 
 - [method] **DO-NEW-CONNECTION** *LISTENING-SOCKET TLS (DISPATCH-METHOD (EQL :NONE/HTTP2))*
 
-    Handle the connection while doing nothing else using HTTP2 asdf library for actual work. Otherwise it is same as the `:NONE` method (i.e., serving a single client)
+    Handle the connection while doing nothing else using HTTP2 asdf library for
+    actual work. Otherwise it is same as the `:NONE` method (i.e., serving a single
+    client at time).
 
 <a id="x-28TLS-SERVER-3ADO-NEW-CONNECTION-20-28METHOD-20NIL-20-28T-20-28EQL-20NIL-29-20-28EQL-20-3AASYNC-29-29-29-29"></a>
 
@@ -127,7 +131,22 @@ Following implementations are defined:
 
     Handle new connections using TLS-SERVE above.
 
+<a id="x-28TLS-SERVER-3A-40TODOS-20MGL-PAX-3ASECTION-29"></a>
+
+## 2 Bugs and considered improvements
+
+Test in another implementation
+
+Improve backpressure
+
+See TODO: and FIXME: in the code
+
+Add measurement points and tunables (probably using (clip)\[https://github.zellerin.cz/clip-1.4\]
+
+Do some measurements for real clients and specific cases
+
   [2ab2]: #x-28TLS-SERVER-3ADO-NEW-CONNECTION-20GENERIC-FUNCTION-29 "TLS-SERVER:DO-NEW-CONNECTION GENERIC-FUNCTION"
+  [2da8]: #x-28TLS-SERVER-3A-40TODOS-20MGL-PAX-3ASECTION-29 "Bugs and considered improvements"
   [335b]: #x-28TLS-SERVER-3A-40IMPLEMENTATIONS-20MGL-PAX-3ASECTION-29 "Implementations"
   [dd5c]: #x-28TLS-SERVER-3ACREATE-SERVER-20FUNCTION-29 "TLS-SERVER:CREATE-SERVER FUNCTION"
 

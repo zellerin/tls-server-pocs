@@ -92,7 +92,8 @@ for one client and in ideal conditions (especially with request pilelining)."
     (do-connection (maybe-add-tls plain tls))))
 
 (defmethod do-new-connection (listening-socket tls (dispatch-method (eql :thread)))
-  "Handle the connection in a new thread."
+  "Handle the connection in a new dedicated thread. This is a method that is used,
+e.g., by Hunchentoot."
   (let ((socket (usocket:socket-accept listening-socket
                                        :element-type '(unsigned-byte 8))))
     (bt:make-thread

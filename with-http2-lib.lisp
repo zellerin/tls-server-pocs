@@ -52,7 +52,9 @@ Terminate if either SSL error occurs, or go-away restart is invoked."
     (go-away ())))
 
 (defmethod do-new-connection (listening-socket tls (dispatch-method (eql :none/http2)))
-  "Handle the connection while doing nothing else using HTTP2 asdf library for actual work. Otherwise it is same as the :NONE method (i.e., serving a single client)"
+  "Handle the connection while doing nothing else using HTTP2 asdf library for
+actual work. Otherwise it is same as the :NONE method (i.e., serving a single
+client at time)."
 
   (usocket:with-connected-socket (plain (usocket:socket-accept listening-socket
                                                                :element-type '(unsigned-byte 8)))

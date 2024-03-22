@@ -86,7 +86,8 @@ types with same interface are defined by specializing DO-NEW-CONNECTION"
 details of the implementations."
   (create-server function)
   (do-new-connection generic-function)
-  (@implementations section))
+  (@implementations section)
+  (@todos section))
 
 (defsection @implementations
     (:title "Implementations")
@@ -98,3 +99,11 @@ details of the implementations."
   (do-new-connection (method nil (t (eql t) (eql :async))))
   (do-new-connection (method nil (t (eql :nonblock) (eql :async))))
   (do-new-connection (method nil (t (eql :tls) (eql :async-custom)))))
+
+(defsection @todos
+    (:title "Bugs and considered improvements")
+  "Test in another implementation"
+  "Improve backpressure"
+  "See TODO: and FIXME: in the code"
+  "Add measurement points and tunables (probably using (clip)[https://github.zellerin.cz/clip-1.4]"
+  "Do some measurements for real clients and specific cases")
