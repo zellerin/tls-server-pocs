@@ -56,6 +56,7 @@ So this repository implements:
   HTTP/2 protocol, and based of that
 - several versions of TCP server that accept and handle the request."
   (tls-server::@server-actions section)
+  (@implementations section)
   (tls-server/utils::@octets section)
   (tls-server/mini-http2::@http2-protocol section)
   (tls-server/mini-http2::@tls section)
@@ -76,6 +77,20 @@ different choices.
 
 So this repository implements:
 
-- very simplified (and indeed incorrect in more than few ways) server side of HTTP/2
-- protocol, and based of that several versions of TCP server that accept and handle the request."
-  (create-server function))
+- very simplified (and indeed incorrect in more than few ways) server side of HTTP/2 protocol, and based of that
+- several versions of TCP server that accept and handle the request.
+
+All the server implementations can be started with CREATE-SERVER. New server types with same interface are defined by specializing DO-NEW-CONNECTION."
+  (create-server function)
+  (@implementations section))
+
+(defsection @implementations
+    (:title "Implementations")
+  "Following implementations are defined:"
+  (do-new-connection (method nil (t t (eql :none))))
+  (do-new-connection (method nil (t t (eql :thread))))
+  (do-new-connection (method nil (t t (eql :none/http2))))
+  (do-new-connection (method nil (t (eql nil) (eql :async))))
+  (do-new-connection (method nil (t (eql t) (eql :async))))
+  (do-new-connection (method nil (t (eql :nonblock) (eql :async))))
+  (do-new-connection (method nil (t (eql :tls) (eql :async-custom)))))
