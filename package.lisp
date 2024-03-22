@@ -8,7 +8,7 @@
 DO-NEW-CONNECTION (specialized to implement particular servers), and various
 restarts. See @SERVER-ACTIONS.
 
-Also holds the top-level documentation sectins, @INDEX and @OVERVIEW."))
+Also holds the top-level documentation sections, @INDEX and @OVERVIEW."))
 
 (in-package #:tls-server)
 

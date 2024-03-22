@@ -39,7 +39,7 @@ EOF, and we rely on that; if this happens, invoke GO-AWAY restart."
   ((name :accessor get-name :initarg :name)
    (args :accessor get-args :initarg :args)
    (docstring :accessor get-docstring :initarg :docstring))
-  (:documentation "Helper class to keep information about CFFI callbacks."))
+  (:documentation "CFFI callbacks information."))
 
 (defvar *callbacks* (make-hash-table :test 'eq))
 
@@ -55,7 +55,7 @@ EOF, and we rely on that; if this happens, invoke GO-AWAY restart."
      (cffi:defcallback ,name ,res-type ,args ,docstring ,@body)))
 
 (dref-ext:define-locative-type callback ()
-  "Refers to a CFFI callback.")
+  "CFFI callback is a Lisp code that can be called from C.")
 
 (dref-ext:define-definition-class callback callback-dref)
 

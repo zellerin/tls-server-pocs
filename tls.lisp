@@ -1,8 +1,12 @@
 (in-package :tls-server/mini-http2)
 
-(mgl-pax:defsection @tls (:title "TLS")
-  "HTTP/2 is deeply connected with \\TLS. This interaction is represented with
-function WRAP-TO-TLS"
+(mgl-pax:defsection @tls (:title "TLS with CL+SSL")
+  "HTTP/2 in most cases needs \\TLS as an underlying layer.
+
+We use MAKE-HTTP2-TLS-CONTEXT to prepare a context that is later stored in
+*HTTP2-TLS-CONTEXT* to have (some) parameters set up properly
+
+Servers using usocket and Lisp streams use WRAP-TO-TLS to establish TLS."
   (make-http2-tls-context function)
   (wrap-to-tls function)
   (*http2-tls-context* variable)
@@ -85,7 +89,8 @@ we should also limit allowed ciphers, but we do not."
       (print (ssl-ctx-use-private-key-file context (namestring (merge-pathnames "certs/server.key" topdir)) cl+ssl::+ssl-filetype-pem+)))
     context))
 
-(defvar *http2-tls-context* (make-http2-tls-context))
+(defvar *http2-tls-context* (make-http2-tls-context)
+  "TLS context to use for our servers.")
 
 (defun wrap-to-tls (raw-stream)
   "Return a binary stream representing TLS server connection over RAW-STREAM.
