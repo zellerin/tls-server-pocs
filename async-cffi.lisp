@@ -80,8 +80,9 @@ DO-SOCK-WRITE called from PROCESS-CLIENT-FD on the callback."
 - Input and output BIO for exchanging data with OPENSSL (RBIO, WBIO),
 - Unencrypted octets to encrypt and send (WRITE-BUF),
 - Encrypted octets to send to the file descriptor (ENCRYPT-BUF),
-- Callback function when read data are available (IO-ON-READ)."
-  fd ssl rbio wbio write-buf encrypt-buf io-on-read fdset-idx)
+- Callback function when read data are available (IO-ON-READ).
+- OCTETS-NEEDED number of octets required by IO-ON-READ, if FRAGMENT-OK this is an upper limit."
+  fd ssl rbio wbio write-buf encrypt-buf io-on-read fdset-idx octets-needed fragment-ok )
 
 (defun use-pem-for (context fn path error)
   (setf path (merge-pathnames path))
@@ -234,7 +235,10 @@ handle "
              (decf size written)
              (setf buffer (inc-pointer buffer written))
              (maybe-init-ssl client)
-             (funcall (client-io-on-read client) client)
+             (loop while
+               (if (plusp (client-octets-needed client))
+                   (on-complete-ssl-data client)
+                   (funcall (client-io-on-read client) client)))
              (do-io-if-wanted client written)
         when (zerop size)
           do (return)))
@@ -309,7 +313,8 @@ Read if you can, write if you can, announce DONE when done."
                               :rbio (bio-new s-mem)
                               :wbio (bio-new s-mem)
                               :ssl (ssl-new ctx)
-                              :io-on-read #'process-client-hello)))
+                              :io-on-read #'process-client-hello
+                              :octets-needed +client-preface-length+)))
     (ssl-set-accept-state (client-ssl client))
     (ssl-set-bio (client-ssl client) (client-rbio client) (client-wbio client))
     client))
@@ -413,32 +418,33 @@ Read if you can, write if you can, announce DONE when done."
 
 
 ;;;; HTTP2 TLS async client
-(defun on-complete-ssl-data (client octets fn)
+(defun on-complete-ssl-data (client)
   "Read exactly OCTETS octets from SSL to VEC.
 
 Raise error if only part of data is available. FIXME: process that anyway"
   (let ((vec (make-shareable-byte-vector +client-preface-length+))
-        (ssl (client-ssl client)))
+        (ssl (client-ssl client))
+        (fn (client-io-on-read client))
+        (octets (client-octets-needed client)))
     (with-pointer-to-vector-data (buffer vec)
+      ;; TODO: check first with SSL_pending?
       (let ((read (ssl-read ssl buffer octets)))
         (cond
-          ((not (plusp read)))          ; just return and try again
+          ((not (plusp read)) nil)          ; just return and try again
           ((/= read octets)
            (error "Read ~d octets. This is not enough octets, why?~%~s~%" read (subseq vec 0 read)))
-          (t (funcall fn client vec)))))))
+          (t (funcall fn client vec) t))))))
 
-(defun process-client-hello* (client vec)
+(defun process-client-hello (client vec)
   (cond ((equalp vec +client-preface-start+)
          (send-unencrypted-bytes client tls-server/mini-http2::*settings-frame*)
          (send-unencrypted-bytes client tls-server/mini-http2::*ack-frame*)
-         (setf (client-io-on-read client) #'process-header))
+         (setf (client-io-on-read client) #'process-header
+               (client-octets-needed client) 9))
         (t
          (error 'client-preface-mismatch :received vec))))
 
-(defun process-client-hello (client)
-  (on-complete-ssl-data client +client-preface-length+ #'process-client-hello*))
-
-(defun process-header* (client header)
+(defun process-header (client header)
   (let* ((frame-size (get-frame-size header))
          (type (get-frame-type header)))
     (declare ((unsigned-byte 8) type)
@@ -454,24 +460,24 @@ Raise error if only part of data is available. FIXME: process that anyway"
                                 (buffer-with-changed-stream *header-frame* id-to-process))
         (send-unencrypted-bytes client
                                 (buffer-with-changed-stream *data-frame* id-to-process))))
-    (setf (client-io-on-read client) (ignore-bytes frame-size))
-    (funcall (client-io-on-read client) client)))
+    (ignore-bytes client frame-size)))
 
-(defun process-header (client)
-  (on-complete-ssl-data client 9 #'process-header*))
-
-(defun ignore-bytes (count)
+(defun ignore-bytes (client count)
   (if (zerop count)
-      #'process-header
-      (lambda (client)
-        (let ((vec (make-shareable-byte-vector count)))
-          (with-pointer-to-vector-data (buffer vec)
-            (let ((read (ssl-read (client-ssl client) buffer count)))
-              (decf count read)
-              (when (zerop count)
-                (setf (client-io-on-read client) #'process-header)
-                (process-header client))))))))
-
+      (setf (client-octets-needed client) 9
+            (client-io-on-read client) #'process-header)
+      (setf (client-octets-needed client) 0
+            (client-io-on-read client)
+            (lambda (client)
+              (let ((vec (make-shareable-byte-vector count)))
+                (with-pointer-to-vector-data (buffer vec)
+                  (let ((read (ssl-read (client-ssl client) buffer count)))
+                    (decf count read)
+                    (when (zerop count)
+                      (setf (client-io-on-read client) #'process-header
+                            (client-octets-needed client) 9)
+                      (on-complete-ssl-data client))))))))
+  t)
 
 ;;;; version with async
 (defmethod do-new-connection (socket (tls (eql :v3)) (dispatch-method (eql :async)))
