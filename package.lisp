@@ -96,7 +96,7 @@ details of the implementations."
   (do-new-connection (method nil (t t (eql :thread))))
   (do-new-connection (method nil (t t (eql :none/http2))))
   (do-new-connection (method nil (t (eql nil) (eql :async))))
-  (do-new-connection (method nil (t (eql t) (eql :async))))
+  (do-new-connection (method nil (t (eql :tls) (eql :async))))
 #+not-ready-yet  (do-new-connection (method nil (t (eql :nonblock) (eql :async))))
   (do-new-connection (method nil (t (eql :tls) (eql :async-custom)))))
 

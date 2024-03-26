@@ -101,9 +101,9 @@ Following implementations are defined:
     SBCL internal function - we re-use the file descriptor of socket created by
     usocket package, as otherwise access to the port of server is complicated.
 
-<a id="x-28TLS-SERVER-3ADO-NEW-CONNECTION-20-28METHOD-20NIL-20-28T-20-28EQL-20T-29-20-28EQL-20-3AASYNC-29-29-29-29"></a>
+<a id="x-28TLS-SERVER-3ADO-NEW-CONNECTION-20-28METHOD-20NIL-20-28T-20-28EQL-20-3ATLS-29-20-28EQL-20-3AASYNC-29-29-29-29"></a>
 
-- [method] **DO-NEW-CONNECTION** *SOCKET (TLS (EQL T)) (DISPATCH-METHOD (EQL :ASYNC))*
+- [method] **DO-NEW-CONNECTION** *SOCKET (TLS (EQL :TLS)) (DISPATCH-METHOD (EQL :ASYNC))*
 
     Handle new connections using cl-async event loop.
     
