@@ -1,0 +1,37 @@
+#+TITLE: Bottlenecks of the servers
+
+To get a feel for individual servers, I ran some speed tests using h2load and clip framework [fn:1].
+
+* Increasing the pipeline and using multiple clients
+:PROPERTIES:
+:ID:       58b6589a-c507-43d6-9148-b498b2e51dea
+:END:
+
+The easiest way to increase throughput is to pipeline requests. Let us check if and how it helps. We keep one client and try increase the pipeline size[fn:2] against multiple implementations.
+
+#+CAPTION:With TLS, single client, pipeline size varies
+[[file:../images/single-client.png]]
+
+This indicates that
+- there is some "shared' envelope of maximum performance that is achievable.
+- the async cffi version aproaches this for small pipeline size, but then fails to deliver. Is it possible to fix it?
+- the implementation using ~cl-async:tcp-ssl-server~ is hopelessly slow.
+
+We may also try multiple clients:
+
+#+CAPTION: With TLS, multiple clients, pipeline size varies
+[[file:../images/five-clients.png]]
+
+The observation indicates that in addition, the threading version has a problem for multiple clients (to add to regression tests -> to fix).
+
+To assess impact of TLS, I tried also non-encrypted communication. Note that presently there is no non-tls counterpart of ~ASYNC-CUSTOM~.
+
+#+CAPTION: No TLS, single client
+[[file:../images/one-client-no-tls.png]]
+
+This indicates that TLS decreases the communication "a lot". Also, the ~cl-async~ is much more competitive without TLS.
+
+* Footnotes
+[fn:1] See [[file:measure.lisp][script to collect data]] and [[file:report.lisp][script to visualise]] them
+
+[fn:2] I.e., send multiple requests/streams without waiting for the first response to arrive

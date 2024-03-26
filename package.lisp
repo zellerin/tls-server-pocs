@@ -82,7 +82,7 @@ So this repository implements:
 
 All the server implementations can be started with CREATE-SERVER. New server
 types with same interface are defined by specializing DO-NEW-CONNECTION"
-  "See also (additional documentation)[https://docs.zellerin.cz/tls-server-poc] for
+  "See also [additional documentation](https://docs.zellerin.cz/tls-server-poc) for
 details of the implementations."
   (create-server function)
   (do-new-connection generic-function)
@@ -105,7 +105,12 @@ details of the implementations."
   "Test in another implementation"
   "Improve backpressure"
   "See TODO: and FIXME: in the code"
-  "Add measurement points and tunables (probably using [clip](https://github.com/zellerin/clip-1.4/))"
+  "Locate and explore performance issues - see [separate file](./clip/bottlenecks.org):
+
+- failures of threaded version,
+- performance regression for async-custom for larger pipeline,
+- non-performance of cl-async::tcp-ssl-server"
+  "Try to fit the observer performance to some formula,"
   "Do some measurements for real clients and specific cases"
   "Add test cases and name existing ones better. Maybe there is a room for
 a [better process](https://doc.zellerin.cz/Integrate%20test%20framework.html)

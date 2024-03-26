@@ -1,7 +1,13 @@
-
-(ql:quickload 'adw-charting-vecto)
+(load "~/quicklisp/setup")
+(load "~/.sbclrc")
+(asdf:load-asd  (merge-pathnames "../tls-server.asd" *load-pathname*))
 (ql:quickload 'lisp-stat)
+(ql:quickload 'adw-charting-vecto)
 
+(defpackage tls-server/report
+  (:use #:cl #:adw-charting #:lisp-stat))
+
+(in-package tls-server/report)
 
 (defun load-clasp-frame (name stream)
   (let* ((symbol (intern (string-upcase name)))
@@ -15,6 +21,7 @@
          (frame (data-frame:alist-df
                  (mapcar (lambda (column-key data-column)
                            (set (intern column-key package) data-column)
+                           (proclaim `(special ,(intern column-key package)))
                            (cons (intern column-key package) data-column))
                          columns
                          (apply 'mapcar 'vector data)))))
@@ -26,7 +33,8 @@
 (defun load-measurements (file)
   (with-open-file (in file)
     (load-clasp-frame "one" in)
-    (load-clasp-frame "five" in)))
+    (load-clasp-frame "five" in)
+    (load-clasp-frame "notls" in)))
 
 (load-measurements (merge-pathnames  "data.clasp" *load-pathname*))
 
@@ -37,20 +45,20 @@
         when (eql value f)
           collect (list d1 d2)))
 
-(with-line-chart (800 600 :background '(.7 .5 .7))
-  (dolist (name '(sync async-custom none async))
+(adw-charting:with-line-chart (800 600 :background '(.7 .5 .7))
+  (dolist (name '(thread async-custom none async))
     (add-series (princ-to-string name)
-                (filter name oneclient::implementation oneclient::multi-threads oneclient::total)))
+                (filter name one::implementation one::multi-threads one::total)))
   (set-axis :y "Requests in 1 sec" :label-formatter "~,2F" :draw-zero-p t )
   (set-axis :x "Pipeline size" :draw-zero-p t
             :draw-gridlines-p nil
             :label-formatter #'(lambda (v)
                                  ;;could do something more interesting here
                                  (format nil "~a" (floor v))))
-  (save-file "/tmp/customized-line-chart.png"))
+  (save-file (merge-pathnames "../images/single-client.png" *load-pathname*)))
 
 (with-line-chart (800 600 :background '(.7 .5 .7))
-  (dolist (name '(sync async-custom none async))
+  (dolist (name '(thread async-custom none async))
     (add-series (princ-to-string name)
                 (filter name five::implementation five::multi-threads five::total)))
   (set-axis :y "Requests in 1 sec" :label-formatter "~,2F" )
@@ -59,4 +67,35 @@
             :label-formatter #'(lambda (v)
                                  ;;could do something more interesting here
                                  (format nil "~a" (floor v))))
-  (save-file "/tmp/customized-line-chart2.png"))
+  (save-file (merge-pathnames "../images/five-clients.png" *load-pathname*)))
+
+(with-line-chart (800 600 :background '(.7 .5 .7))
+       (dolist (name '(thread async-custom none async))
+         (add-series (princ-to-string name)
+                     (filter name notls::implementation notls::multi-threads notls::total)))
+       (set-axis :y "Requests in 1 sec" :label-formatter "~,2F" )
+       (set-axis :x "Pipeline size" :draw-zero-p t
+                 :draw-gridlines-p nil
+                 :label-formatter #'(lambda (v) (format nil "~a" (floor v))))
+       (save-file (merge-pathnames "../images/one-client-no-tls.png" *load-pathname*)))
+
+(defun parse-time-symbol (datum)
+  (let* ((s (symbol-name datum))
+         (len (length s)))
+    (cond ((null (mismatch "US" s :start2 (- len 2)))
+           (read-from-string s t nil :end (- len 2)))
+          ((null (mismatch "MS" s :start2 (- len 2)))
+           (* 1000.0 (read-from-string s t nil :end (- len 2))))
+          ((null (mismatch "S" s :start2 (- len 1)))
+           (* 1000000.0 (read-from-string s t nil :end (- len 1)))))))
+
+(with-line-chart (800 600 :background '(.7 .5 .7))
+  (dolist (name '(thread async-custom none #+nil async))
+    (add-series (princ-to-string name)
+                (filter name one::implementation one::multi-threads (map 'vector 'parse-time-symbol one::mean))))
+  (set-axis :x "Pipeline size (streams)" :label-formatter "~,2F" )
+  (set-axis :y "Mean request time (us)" :draw-zero-p t
+            :draw-gridlines-p nil
+            :scalefn 'log
+            :label-formatter #'(lambda (v) (format nil "~a" (floor v))))
+  (save-file (merge-pathnames "../images/one-client-ttl.png" *load-pathname*)))
