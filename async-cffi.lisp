@@ -371,10 +371,12 @@ Read if you can, write if you can, announce DONE when done."
         (error "Error on listening socket"))))
 
 (defun close-client-connection (fdset client)
-  (ssl-free (client-ssl client)) ; BIOs are closed automatically
+  (setf *clients* (remove client *clients*))
+  (when (client-ssl client)
+    (ssl-free (client-ssl client)))     ; BIOs are closed automatically
+  (setf (client-ssl client) nil)
   (push (client-fdset-idx client) *empty-fdset-items*)
   (set-fd-slot fdset -1 0 (client-fdset-idx client))
-  (setf *clients* (remove client *clients*))
   (close-fd (client-fd client)))
 
 (defun process-client-sockets (fdset nread)
