@@ -35,6 +35,8 @@
 (defcfun ("close" close-fd) :int (fd :int))
 (defcfun ("read" read-2) :int (fd :int) (buf :pointer) (size :int))
 (defcfun ("write" write-2) :int (fd :int) (buf :pointer) (size :int))
+(defcfun "fcntl" :int (fd :int) (cmd :int) (value :int))
+(defcfun "accept" :int (fd :int) (addr :pointer) (addrlen :int))
 
 (mgl-pax:defsection  @async-server
     (:title "Asynchronous TLS server")
@@ -359,11 +361,12 @@ Read if you can, write if you can, announce DONE when done."
   "Add new client: accept connection, create client and add it to pollfd and to *clients*."
   (with-foreign-slots ((revents) fdset (:struct pollfd))
     (if (plusp (logand c-pollin revents))
-        (let* ((socket (sb-bsd-sockets:socket-file-descriptor
-                        (usocket:socket
-                         (usocket:socket-accept listening-socket :element-type
-                                                '(unsigned-byte 8)))))
+        (let* ((socket (accept
+                        (sb-bsd-sockets::socket-file-descriptor (usocket:socket listening-socket)) (null-pointer) 0))
                (client (make-client-object socket ctx s-mem)))
+          (unless (zerop (fcntl socket f-setfl
+                                (logior o-nonblock (fcntl socket f-getfl 0))))
+            (error "Could not set O_NONBLOCK on client"))
           (add-socket-to-fdset fdset socket client)
           ;; maybe TODO: if no fdset slot available, stop reading listening socket
           (push client *clients*)))

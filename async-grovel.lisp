@@ -1,9 +1,16 @@
 (in-package #:tls-server/async/tls)
 (include "poll.h")
+(include "fcntl.h")
+(include "sys/socket.h")
+
 (cstruct pollfd "struct pollfd"
          (fd "fd" :type :int)
          (events "events" :type :short)
          (revents "revents" :type :short))
+
+(constant (f-setfl "F_SETFL"))
+(constant (f-getfl "F_GETFL"))
+(constant (o-nonblock "O_NONBLOCK"))
 
 (constant (c-pollin "POLLIN"))
 (constant (c-pollout "POLLOUT"))
