@@ -272,12 +272,17 @@ handle "
 (defvar *default-buffer-size* 64)
 
 (defun process-data-on-socket (client)
-  "Read data from client socket. If something is read (and it should, as this is called when there should be a data), it is passed to the "
+  "Read data from client socket. If something is read (and it should, as this is
+called when there should be a data), it is passed to the tls buffer and
+decrypted."
   (with-foreign-object (buffer :char *default-buffer-size*)
-    (let ((read (read-2 (client-fd client) buffer *default-buffer-size*)))
-      (if (plusp read)
-          (decrypt-socket-octets client buffer read)
-          (signal 'done)))))
+    (loop
+      for i from 0 to *max-read-chunks*
+      for read = (read-2 (client-fd client) buffer *default-buffer-size*)
+      while (plusp read)
+      do (decrypt-socket-octets client buffer read)
+         ;; todo: check also errno, do not rely on it being EAGAIN or EWOULDBLOCK.
+      finally (when (zerop read) (signal 'done)))))
 
 (defun concatenate* (vectors)
   (let* ((len (reduce #'+ vectors :key #'length))
