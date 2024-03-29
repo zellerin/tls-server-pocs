@@ -12,6 +12,7 @@ server types implement appropriate methods to ensure desired behaviour."
   (go-away restart)
   (callback-on-server function)
   (url-from-socket function)
+  (url-from-port function)
   ;; TODO: remove/fix
   (*buffer* variable))
 
@@ -47,6 +48,15 @@ This is to be used as callback fn on an open server for testing it."
   (make-instance 'puri:uri
                  :scheme (if tls :https :http)
                  :port (usocket:get-local-port socket)
+                 :host host))
+
+(defun url-from-port (port host tls)
+  "Return URL that combines HOST with the port of the SOCKET.
+
+This is to be used as callback fn on an open server for testing it."
+  (make-instance 'puri:uri
+                 :scheme (if tls :https :http)
+                 :port port
                  :host host))
 
 (defgeneric do-new-connection (listening-socket tls dispatch-method)

@@ -85,8 +85,8 @@ we should also limit allowed ciphers, but we do not."
      context
      (cffi:get-callback 'select-h2-callback))
     (let ((topdir (asdf:component-pathname (asdf:find-system "tls-server"))))
-      (print (ssl-ctx-use-certificate-chain-file context (namestring (merge-pathnames "certs/server.crt" topdir))))
-      (print (ssl-ctx-use-private-key-file context (namestring (merge-pathnames "certs/server.key" topdir)) cl+ssl::+ssl-filetype-pem+)))
+      (ssl-ctx-use-certificate-chain-file context (namestring (merge-pathnames "certs/server.crt" topdir)))
+      (ssl-ctx-use-private-key-file context (namestring (merge-pathnames "certs/server.key" topdir)) cl+ssl::+ssl-filetype-pem+))
     context))
 
 (defvar *http2-tls-context* (make-http2-tls-context)
