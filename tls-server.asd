@@ -39,3 +39,10 @@
                (:file "utils")
                (:file "client")
                (:file "http2")))
+
+(defsystem #:tls-server/clip
+  :depends-on ("tls-server" "clip-1994")
+  :license  "MIT"
+  :pathname "clip"
+  :components ((:file "setup")
+))
