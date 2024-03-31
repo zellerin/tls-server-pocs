@@ -75,7 +75,7 @@ DO-SOCK-WRITE called from PROCESS-CLIENT-FD on the callback."
 (defvar *max-read-chunks* 10
   "Read up to this number of chunks before encrypting the output.")
 
-(defstruct client
+(defstruct (client (:constructor make-client%))
   "Data of one client connection. This includes:
 
 - File desriptor (FD),
@@ -85,10 +85,17 @@ DO-SOCK-WRITE called from PROCESS-CLIENT-FD on the callback."
 - Encrypted octets to send to the file descriptor (ENCRYPT-BUF),
 - Callback function when read data are available (IO-ON-READ).
 - OCTETS-NEEDED number of octets required by IO-ON-READ, if FRAGMENT-OK this is an upper limit."
-  fd ssl rbio wbio write-buf
-  (encrypt-buf (make-array *encrypt-buf-size* :element-type '(unsigned-byte 8)))
-  io-on-read fdset-idx octets-needed fragment-ok
-  (encrypt-buf-size 0))
+  (fd -1 :type fixnum :read-only t)
+  (ssl (null-pointer) :type cffi:foreign-pointer :read-only t)
+  (rbio (null-pointer) :type cffi:foreign-pointer :read-only t)
+  (wbio (null-pointer) :type cffi:foreign-pointer :read-only t)
+  (write-buf nil :type (or null cons))
+  (encrypt-buf (make-array *encrypt-buf-size* :element-type '(unsigned-byte 8))
+   :type (simple-array (unsigned-byte 8)))
+  (io-on-read #'process-client-hello :type compiled-function)
+  (fdset-idx 0 :type fixnum :read-only t)
+  (octets-needed +client-preface-length+ :type fixnum)
+  (encrypt-buf-size 0 :type fixnum))
 
 (defun use-pem-for (context fn path error)
   (setf path (merge-pathnames path))
@@ -177,60 +184,60 @@ Raise error otherwise."
   (when (zerop (ssl-is-init-finished (client-ssl client)))
     (do-io-if-wanted client (ssl-accept (client-ssl client)))))
 
-(defun send-unencrypted-bytes (client new-data)
-  "Process new data to be encrypted and sent to client.
+(defun doubled-buffer (buffer)
+  "Return a larger buffer with same initial data as the provided one."
+  (let ((new (make-array (* 2 (length buffer))
+                         :element-type '(unsigned-byte 8))))
+    (replace new buffer)
+    new))
 
-Data are just concatenated to the ENCRYPT-BUF. Later, they would be encrypted
-and passed."
-  (let ((old-fp (client-encrypt-buf-size client)))
-    (setf (client-encrypt-buf-size client)
-          (+ old-fp (length new-data)))
+(defun send-unencrypted-bytes (client new-data)
+  "Collect new data to be encrypted and sent to client.
+
+Data are just concatenated to the ENCRYPT-BUF."
+  (let ((old-fp (client-encrypt-buf-size client))
+        (buffer (client-encrypt-buf client)))
+    (incf (client-encrypt-buf-size client) (length new-data))
     (when
         (> (client-encrypt-buf-size client) (length (client-encrypt-buf client)))
-      (let ((old (client-encrypt-buf client)))
-        (setf (client-encrypt-buf client)
-              (make-array (* 2  (length (client-encrypt-buf client)))
-                          :element-type '(unsigned-byte 8)))
-        (replace  (client-encrypt-buf client) old)))
+      (setf (client-encrypt-buf client) (doubled-buffer buffer)))
     (replace (client-encrypt-buf client) new-data :start1 old-fp)))
-
-(defvar *unencrypted-sender* 'send-unencrypted-bytes-v1
-  "Default function to send unencrypted data.")
 
 (defun encrypt-data (client)
   "Encrypt data in client's ENCRYPT-BUF.
 
-Do nothing if no data to encrypt or SSL not yet initialized.
+Do nothing if no data to encrypt or SSL not yet initialized (and return zero).
 
-Otherwise, use a temporary vector to write data "
-  (unless (or (zerop (client-encrypt-buf-size client))
-              (zerop (ssl-is-init-finished (client-ssl client))))
-    (let ((data (client-encrypt-buf client))
-          (read-vector (make-shareable-byte-vector *default-buffer-size*)))
-      (with-pointer-to-vector-data (read-buffer read-vector)
-        (declare (dynamic-extent read-buffer))
-        (with-pointer-to-vector-data (buffer data)
-          (declare (dynamic-extent buffer))
-          (loop
-            with len = (client-encrypt-buf-size client)
-            and all-written = 0
-            and ssl = (client-ssl client)
-            for written = (ssl-write ssl buffer len)
-            for status = (ssl-get-error ssl written)
-            do
-               (cond
-                 ((= len written)
-                  (move-encrypted-bytes (client-wbio client)  client read-buffer read-vector)
-                  (return (+ len all-written)))
-                 ((plusp written)
-                  (incf all-written written)
-                  (setf buffer (inc-pointer buffer written))
-                  (decf len written)
-                  (move-encrypted-bytes (client-wbio client) read-buffer client read-vector))
-                 ((not (member status (list ssl-error-none ssl-error-want-write ssl-error-want-read)))
-                  (error "SSL write failed, status ~d" status))
-                 ((zerop written)
-                  (return all-written)))))))))
+Otherwise, use a temporary vector to write data."
+  (if (or (zerop (client-encrypt-buf-size client))
+          (zerop (ssl-is-init-finished (client-ssl client))))
+      0
+      (let ((data (client-encrypt-buf client))
+            (read-vector (make-shareable-byte-vector *default-buffer-size*)))
+        (with-pointer-to-vector-data (read-buffer read-vector)
+          (declare (dynamic-extent read-buffer))
+          (with-pointer-to-vector-data (buffer data)
+            (declare (dynamic-extent buffer))
+            (loop
+              with len = (client-encrypt-buf-size client)
+              and all-written = 0
+              and ssl = (client-ssl client)
+              for written = (ssl-write ssl buffer len)
+              for status = (ssl-get-error ssl written)
+              do
+                 (cond
+                   ((= len written)
+                    (move-encrypted-bytes (client-wbio client)  client read-buffer read-vector)
+                    (return (+ len all-written)))
+                   ((plusp written)
+                    (incf all-written written)
+                    (setf buffer (inc-pointer buffer written))
+                    (decf len written)
+                    (move-encrypted-bytes (client-wbio client) read-buffer client read-vector))
+                   ((not (member status (list ssl-error-none ssl-error-want-write ssl-error-want-read)))
+                    (error "SSL write failed, status ~d" status))
+                   ((zerop written)
+                    (return all-written)))))))))
 
 (defun queue-encrypted-bytes (client new-data)
   (setf (client-write-buf client)
@@ -327,12 +334,12 @@ Read if you can, write if you can, announce DONE when done."
 
 (defun make-client-object (socket ctx s-mem)
   "Create new CLIENT object suitable for TLS server."
-  (let* ((client (make-client :fd socket
-                              :rbio (bio-new s-mem)
-                              :wbio (bio-new s-mem)
-                              :ssl (ssl-new ctx)
-                              :io-on-read #'process-client-hello
-                              :octets-needed +client-preface-length+)))
+  (let* ((client (make-client% :fd socket
+                               :rbio (bio-new s-mem)
+                               :wbio (bio-new s-mem)
+                               :ssl (ssl-new ctx)
+                               :io-on-read #'process-client-hello
+                               :octets-needed +client-preface-length+)))
     (ssl-set-accept-state (client-ssl client))
     (ssl-set-bio (client-ssl client) (client-rbio client) (client-wbio client))
     client))
