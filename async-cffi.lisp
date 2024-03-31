@@ -208,36 +208,37 @@ Data are just concatenated to the ENCRYPT-BUF."
 
 Do nothing if no data to encrypt or SSL not yet initialized (and return zero).
 
-Otherwise, use a temporary vector to write data."
-  (if (or (zerop (client-encrypt-buf-size client))
-          (zerop (ssl-is-init-finished (client-ssl client))))
-      0
-      (let ((data (client-encrypt-buf client))
-            (read-vector (make-shareable-byte-vector *default-buffer-size*)))
-        (with-pointer-to-vector-data (read-buffer read-vector)
-          (declare (dynamic-extent read-buffer))
-          (with-pointer-to-vector-data (buffer data)
-            (declare (dynamic-extent buffer))
-            (loop
-              with len = (client-encrypt-buf-size client)
+Otherwise, use a temporary vector to write data, and update the buffer."
+  (unless (or (zerop (client-encrypt-buf-size client))
+              (zerop (ssl-is-init-finished (client-ssl client))))
+    (let ((data (client-encrypt-buf client))
+          (read-vector (make-shareable-byte-vector *default-buffer-size*)))
+      (with-pointer-to-vector-data (read-buffer read-vector)
+        (declare (dynamic-extent read-buffer))
+        (with-pointer-to-vector-data (buffer data)
+          (declare (dynamic-extent buffer))
+          (loop
+            with len = (client-encrypt-buf-size client)
               and all-written = 0
               and ssl = (client-ssl client)
-              for written = (ssl-write ssl buffer len)
-              for status = (ssl-get-error ssl written)
-              do
-                 (cond
-                   ((= len written)
-                    (move-encrypted-bytes (client-wbio client)  client read-buffer read-vector)
-                    (return (+ len all-written)))
-                   ((plusp written)
-                    (incf all-written written)
-                    (setf buffer (inc-pointer buffer written))
-                    (decf len written)
-                    (move-encrypted-bytes (client-wbio client) read-buffer client read-vector))
-                   ((not (member status (list ssl-error-none ssl-error-want-write ssl-error-want-read)))
-                    (error "SSL write failed, status ~d" status))
-                   ((zerop written)
-                    (return all-written)))))))))
+            for written = (ssl-write ssl buffer len)
+            for status = (ssl-get-error ssl written)
+            do
+               (cond
+                 ((= len written)
+                  (move-encrypted-bytes (client-wbio client)  client read-buffer read-vector)
+                  (setf (client-encrypt-buf-size client) 0)
+                  (return))
+                 ((plusp written)
+                  (incf all-written written)
+                  (setf buffer (inc-pointer buffer written))
+                  (decf len written)
+                  (move-encrypted-bytes (client-wbio client) read-buffer client read-vector))
+                 ((not (member status (list ssl-error-none ssl-error-want-write ssl-error-want-read)))
+                  (error "SSL write failed, status ~d" status))
+                 ((zerop written)
+                  (update-encrypt-buf-ptr client all-written)
+                  (return)))))))))
 
 (defun queue-encrypted-bytes (client new-data)
   (setf (client-write-buf client)
@@ -362,14 +363,17 @@ Read if you can, write if you can, announce DONE when done."
         do
            (set-fd-slot fdset -1 0 i)))
 
+(defun update-encrypt-buf-ptr (client octets)
+  "Remove OCTETS "
+  (replace (client-encrypt-buf client)
+           (client-encrypt-buf client)
+           :start2 octets :end2 (client-encrypt-buf-size client))
+  (decf (client-encrypt-buf-size client) octets))
+
 (defun handle-client-io (client fdset)
   (let ((fd-ptr (inc-pointer fdset (* (client-fdset-idx client) size-of-pollfd))))
     (process-client-fd fd-ptr client)
-    (when (plusp (client-encrypt-buf-size client))
-      (let ((written-octets (encrypt-data client)))
-        (replace (client-encrypt-buf client) (client-encrypt-buf client)
-                 :start2 written-octets :end2 (client-encrypt-buf-size client))
-        (decf (client-encrypt-buf-size client) written-octets)))
+    (encrypt-data client)
     (with-foreign-slots ((events)
                          fd-ptr
                          (:struct pollfd))
