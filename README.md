@@ -5,7 +5,8 @@
 ## Table of Contents
 
 - [1 Implementations][335b]
-- [2 Bugs and considered improvements][2da8]
+- [2 Some metrics][044e]
+- [3 Bugs and considered improvements][2da8]
 
 ###### \[in package TLS-SERVER\]
 I wanted to play with different options for HTTP/2 server implementations. While
@@ -22,7 +23,7 @@ So this repository implements:
 All the server implementations can be started with [`CREATE-SERVER`][dd5c]. New server
 types with same interface are defined by specializing [`DO-NEW-CONNECTION`][2ab2]
 
-See also (additional documentation)\[https://docs.zellerin.cz/tls-server-poc\] for
+See also [additional documentation](https://docs.zellerin.cz/tls-server-poc) for
 details of the implementations.
 
 <a id="x-28TLS-SERVER-3ACREATE-SERVER-20FUNCTION-29"></a>
@@ -101,9 +102,9 @@ Following implementations are defined:
     SBCL internal function - we re-use the file descriptor of socket created by
     usocket package, as otherwise access to the port of server is complicated.
 
-<a id="x-28TLS-SERVER-3ADO-NEW-CONNECTION-20-28METHOD-20NIL-20-28T-20-28EQL-20T-29-20-28EQL-20-3AASYNC-29-29-29-29"></a>
+<a id="x-28TLS-SERVER-3ADO-NEW-CONNECTION-20-28METHOD-20NIL-20-28T-20-28EQL-20-3ATLS-29-20-28EQL-20-3AASYNC-29-29-29-29"></a>
 
-- [method] **DO-NEW-CONNECTION** *SOCKET (TLS (EQL T)) (DISPATCH-METHOD (EQL :ASYNC))*
+- [method] **DO-NEW-CONNECTION** *SOCKET (TLS (EQL :TLS)) (DISPATCH-METHOD (EQL :ASYNC))*
 
     Handle new connections using cl-async event loop.
     
@@ -126,9 +127,22 @@ Following implementations are defined:
     This in the end does not use usocket, async nor cl+ssl - it is a direct rewrite
     from C code.
 
+<a id="x-28TLS-SERVER-3A-40MEASUREMENTS-20MGL-PAX-3ASECTION-29"></a>
+
+## 2 Some metrics
+
+Now it is possible to do some measurements; assuming you have clip library
+installed (not in quicklisp), you can run scripts \[./clip/measure.lisp\] to obtain how fast some
+combinations of number of clients, size of pipeline and implementation is.
+
+If you have adw-charting library installed (surprisingly presently also not in quicklisp), you can then generate some graphs from the data using \[./clip/report.lisp\]
+
+Or you can just check \[./images\] that reflect the state at some point of time on some
+particular machine.
+
 <a id="x-28TLS-SERVER-3A-40TODOS-20MGL-PAX-3ASECTION-29"></a>
 
-## 2 Bugs and considered improvements
+## 3 Bugs and considered improvements
 
 Test in another implementation
 
@@ -136,9 +150,16 @@ Improve backpressure
 
 See TODO: and FIXME: in the code
 
-Add measurement points and tunables (probably using [clip](https://github.com/zellerin/clip-1.4/))
+Locate and explore performance issues - see [separate file](./clip/bottlenecks.org):
 
-Do some measurements for real clients and specific cases
+- failures of threaded version,
+
+- performance regression for async-custom for larger pipeline,
+
+- non-performance of cl-async::tcp-ssl-server
+
+
+Try to fit the observer performance to some formula,
 
 Add test cases and name existing ones better. Maybe there is a room for
 a [better process](https://doc.zellerin.cz/Integrate%20test%20framework.html)
@@ -147,6 +168,7 @@ a [better process](https://doc.zellerin.cz/Integrate%20test%20framework.html)
 
 Try Quic/HTTP3
 
+  [044e]: #x-28TLS-SERVER-3A-40MEASUREMENTS-20MGL-PAX-3ASECTION-29 "Some metrics"
   [2ab2]: #x-28TLS-SERVER-3ADO-NEW-CONNECTION-20GENERIC-FUNCTION-29 "TLS-SERVER:DO-NEW-CONNECTION GENERIC-FUNCTION"
   [2da8]: #x-28TLS-SERVER-3A-40TODOS-20MGL-PAX-3ASECTION-29 "Bugs and considered improvements"
   [335b]: #x-28TLS-SERVER-3A-40IMPLEMENTATIONS-20MGL-PAX-3ASECTION-29 "Implementations"
