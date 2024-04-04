@@ -36,7 +36,7 @@
                         "--warm-up-time" "100ms"
                         "-T" "1"
                         "-N" "1")
-             :output :string :ignore-error-status nil))))
+             :output :string :ignore-error-status t))))
 
 ;;;; Simulations
 (define-simulator load-system
@@ -56,7 +56,7 @@
 
 (defclip h2load-parsed-fin () (:components (finished req/s MB/s))
   (multiple-value-bind (match val)
-      (cl-ppcre:scan-to-strings "finished in ([0-9.s]+), ([0-9.]+) req/s, (.*)" *res*)
+      (cl-ppcre:scan-to-strings "finished in ([0-9.]+)s, ([0-9.]+) req/s, (.*)" *res*)
     (if match
         (apply 'values (map 'list 'identity val))
         (values 0 0 0))))
@@ -67,6 +67,10 @@
     (if match
         (apply 'values (map 'list 'identity val))
         (values 0 0 0 0 0))))
+
+(defclip h2load-full () ()
+  (prin1-to-string *res*))
+
 
 ;;;; Clips for perf
 (defclip perf-report ()
