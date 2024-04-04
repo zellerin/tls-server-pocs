@@ -95,13 +95,13 @@ Signal CLIENT-PREFACE-MISMATCH on mismatch."
           'client-preface-mismatch :received
            (subseq *buffer* 0 +client-preface-length+)))
 
-(defun buffer-with-changed-stream (buf stream-id)
+(defun buffer-with-changed-stream (buf stream-id &optional (start 0))
   "Change stream id of a frame in BUF to STREAM-ID."
   (declare (octet-vector buf))
-  (setf (aref buf 8) (ldb (byte 8 0) stream-id))
-  (setf (aref buf 7) (ldb (byte 8 8) stream-id))
-  (setf (aref buf 6) (ldb (byte 8 16) stream-id))
-  (setf (aref buf 5) (ldb (byte 7 23) stream-id))
+  (setf (aref buf (incf start 5)) (ldb (byte 7 23) stream-id))
+  (setf (aref buf (incf start)) (ldb (byte 8 16) stream-id))
+  (setf (aref buf (incf start)) (ldb (byte 8 8) stream-id))
+  (setf (aref buf (incf start)) (ldb (byte 8 0) stream-id))
   buf)
 
 (defun get-frame-size (header)
@@ -136,6 +136,34 @@ Signal CLIENT-PREFACE-MISMATCH on mismatch."
   (write-sequence (buffer-with-changed-stream *data-frame* stream-id) stream)
   (force-output stream))
 
+
+
+(defun make-requests-vector (requests-count)
+  "Make a vector that contains client hello, "
+  (loop with size = (+ +client-preface-length+
+                       (length *settings-frame*)
+                       (length *ack-frame*)
+                       (* requests-count (+ 9 (length *request-headers*)))
+                       9 8)
+        with vector = (make-array size
+                                :element-type '(unsigned-byte 8))
+        initially
+           (replace vector +client-preface-start+)
+           (replace vector *settings-frame* :start1 +client-preface-length+)
+           (replace vector *ack-frame*
+                    :start1 (+ (length *settings-frame*) +client-preface-length+))
+        for stream-id from 1 by 2
+        for count from 1 to requests-count
+        for index from (+ +client-preface-length+
+                          (length *settings-frame*)
+                          (length *ack-frame*))
+          by (+ 9 (length *request-headers*))
+        do (write-frame-header vector index (length *request-headers*) 1 stream-id 5)
+           (replace vector *request-headers* :start1 (+ 9 index))
+        finally
+           (write-frame-header vector (- size 9) 8 7 0 0)
+           (return vector)))
+
 (defgeneric maybe-add-tls (socket tls)
   (:documentation "Return either plain (if tls is nil) or TLS (if :tls) Lisp stream
  build upon SOCKET stream.
@@ -145,3 +173,18 @@ This is used by implementation that use usocket sockets.")
     (wrap-to-tls socket))
   (:method (socket (tls (eql nil)))
     (usocket:socket-stream socket)))
+
+
+(defun send-requests (host &key (count 10) (port 443) (sni host) verify
+                             (alpn-protocols '("h2")))
+  (let ((stream
+          (cl+ssl:make-ssl-client-stream
+           (usocket:socket-stream
+            (usocket:socket-connect host port :element-type '(unsigned-byte 8)))
+           :verify verify :hostname sni :alpn-protocols alpn-protocols)))
+    (write-sequence (make-requests-vector count) stream)
+    (force-output stream)
+
+    (let ((result (make-array 4096 :element-type '(unsigned-byte 8))))
+      (print (read-sequence result stream))
+      result)))
