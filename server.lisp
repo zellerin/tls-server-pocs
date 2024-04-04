@@ -69,17 +69,19 @@ This is to be used as callback on an open server for testing it."
     (let ((parent (bt:current-thread)))
       (bt:make-thread
        (lambda ()
-         (bt:interrupt-thread parent #'kill-server
-                              (with-simple-restart (kill-parent "Kill parent")
-                                (funcall fn url))))
+         (let ((result))
+           (unwind-protect
+                (with-simple-restart (kill-parent "Kill parent")
+                  (setf result (funcall fn url)))
+             (bt:interrupt-thread parent #'kill-server result))))
        :name thread-name))))
 
-(defun kill-server (&optional res)
+(defun kill-server (&optional result)
   "Kill server by invoking KILL-SERVER restart, if it exists."
   (let ((restart
           (find-restart 'kill-server)))
     (if restart
-        (invoke-restart restart res))))
+        (invoke-restart restart result))))
 
 (mgl-pax:define-restart kill-server (&optional value)
   "Restart established in CREATE-SERVER that can be invoked to terminate the server

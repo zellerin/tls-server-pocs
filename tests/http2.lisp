@@ -44,7 +44,7 @@
 (deftest callback-on-server/test-no-kill-server ()
   "Test that CALLBACK-ON-SERVER fails nicely when there is no KILL-SERVER restart
    present."
-  (is (null
+  (is (equal "foo"
        (let ((thread (funcall (callback-on-server #'identity) "foo")))
          (bt:join-thread thread)))))
 
