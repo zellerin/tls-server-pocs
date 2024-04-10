@@ -4,7 +4,7 @@
 (use-foreign-library openssl)
 
 (defcfun "BIO_new" :pointer (bio-method :pointer))
-(defcfun "BIO_read" :int (bio-method :pointer) (data :pointer) (dlen :int))
+(defcfun ("BIO_read" bio-read%) :int (bio-method :pointer) (data :pointer) (dlen :int))
 (defcfun "BIO_s_mem" :pointer)
 (defcfun "BIO_test_flags" :int (bio :pointer) (what :int))
 (defcfun "BIO_write" :int (bio-method :pointer) (data :pointer) (dlen :int))
@@ -31,12 +31,28 @@
 (defcfun "SSL_write" :int (ssl :pointer) (buffer :pointer) (bufsize :int))
 (defcfun "TLS_method" :pointer)
 
+(defcfun ("__errno_location" errno) :int)
+(defcfun ("strerror_r" strerror-r%) :pointer (errnum :int) (buffer :pointer) (buflen :int))
+
 (defcfun "poll" :int (fdset :pointer) (rb :int) (timeout :int))
 (defcfun ("close" close-fd) :int (fd :int))
 (defcfun ("read" read-2) :int (fd :int) (buf :pointer) (size :int))
 (defcfun ("write" write-2) :int (fd :int) (buf :pointer) (size :int))
 (defcfun "fcntl" :int (fd :int) (cmd :int) (value :int))
 (defcfun "accept" :int (fd :int) (addr :pointer) (addrlen :int))
+
+(defun bio-read (client vec size)
+  (declare ((simple-array (unsigned-byte 8)) vec)
+           (fixnum size)
+           (optimize speed (safety 1)))
+  (with-pointer-to-vector-data (buffer vec)
+    (bio-read% (client-wbio client) buffer size)))
+
+(defun strerror (errnum)
+  (let ((str (make-array 256 :element-type 'character)))
+    (with-pointer-to-vector-data (buffer str)
+      (foreign-string-to-lisp (strerror-r% errnum buffer 256)))))
+
 
 (mgl-pax:defsection  @async-server
     (:title "Asynchronous TLS server")
