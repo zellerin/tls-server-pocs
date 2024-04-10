@@ -130,22 +130,23 @@ however, it used directly cffi and sets some parameters in a different way."
           (progn ,@body)
        (ssl-ctx-free ,ctx))))
 
-(defun pull-push-bytes (in-fn out-fn vec vec-size)
+(defun pull-push-bytes (client in-fn out-fn vec vec-size)
   "Move data encrypted by OpenSSL to the output socket queue."
   (declare (optimize speed (safety 1) (debug 0))
            ((simple-array (unsigned-byte 8)) vec)
-           ((function ((simple-array (unsigned-byte 8)) fixnum) fixnum) in-fn out-fn))
-  (loop for n fixnum = (funcall in-fn vec vec-size)
+           ((function (t (simple-array (unsigned-byte 8)) fixnum) fixnum) in-fn out-fn))
+  (loop for n fixnum = (funcall in-fn client vec vec-size)
         while (plusp n)
         ;; assumption: never fail
-        do (funcall out-fn vec n)))
+        do (funcall out-fn client vec n)))
 
-(defun move-encrypted-bytes (wbio client vec)
+(defun move-encrypted-bytes (client vec)
   "Move data encrypted by OpenSSL to the output socket queue."
-  (pull-push-bytes (lambda (vec size)
+  (pull-push-bytes client
+                   (lambda (client vec size)
                      (with-pointer-to-vector-data (buffer vec)
-                       (bio-read wbio buffer size)))
-                   (lambda (vec size)
+                       (bio-read (client-wbio client) buffer size)))
+                   (lambda (client vec size)
                      (queue-encrypted-bytes client (subseq vec 0 size)))
                    vec
                    *default-buffer-size*))
@@ -182,7 +183,7 @@ Repeat on partial write."
 
 (defun encrypt-data-internal (client data read-vector)
   (push-bytes client
-   (lambda (client) (move-encrypted-bytes (client-wbio client) client read-vector))
+   (lambda (client) (move-encrypted-bytes client read-vector))
 
    (lambda (client vector from to) (encrypt-some (client-ssl client) vector from to))
    data 0 (client-encrypt-buf-size client)))
@@ -203,7 +204,7 @@ Raise error otherwise."
       (case err-code
         ((#.ssl-error-want-read #.ssl-error-want-write)
          (let* ((vec (make-shareable-byte-vector *default-buffer-size*)))
-           (move-encrypted-bytes wbio client vec)
+           (move-encrypted-bytes client vec)
            (when (zerop (bio-test-flags wbio bio-flags-should-retry))
              (error "Should retry should be set."))))
         (#.ssl-error-none nil)
@@ -241,9 +242,6 @@ and passed."
                           :element-type '(unsigned-byte 8)))
         (replace  (client-encrypt-buf client) old)))
     (replace (client-encrypt-buf client) new-data :start1 old-fp)))
-
-(defvar *unencrypted-sender* 'send-unencrypted-bytes-v1
-  "Default function to send unencrypted data.")
 
 (defun encrypt-data (client)
   "Encrypt data in client's ENCRYPT-BUF.
@@ -301,6 +299,22 @@ handle the data."
     (format stream "~x: ~a" (get-code object)
             (ssl-err-reason-error-string (get-code object)))))
 
+#+new
+(defun process-data-on-socket (client)
+  "Read data from client socket. If something is read (and it should, as this is
+called when there should be a data), it is passed to the tls buffer and
+decrypted."
+  (let ((data (make-array *default-buffer-size* :element-type '(unsigned-byte 8))))
+    (pull-push-bytes
+     (lambda (vec vec-size)
+       (with-pointer-to-vector-data (buffer vec)
+         (read-2 (client-fd client) buffer vec-size)))
+     (lambda (vec vec-size)
+       (decrypt-socket-octets client vec vec-size))
+     data *default-buffer-size*))
+  (signal 'done))
+
+#-new
 (defun process-data-on-socket (client)
   "Read data from client socket. If something is read (and it should, as this is
 called when there should be a data), it is passed to the tls buffer and
@@ -309,7 +323,7 @@ decrypted."
     (loop
       for i from 0 to *max-read-chunks*
       for read = (with-pointer-to-vector-data (buffer data)
-                 (read-2 (client-fd client) buffer *default-buffer-size*))
+                   (read-2 (client-fd client) buffer *default-buffer-size*))
       while (plusp read)
       do (decrypt-socket-octets client data read)
          ;; todo: check also errno, do not rely on it being EAGAIN or EWOULDBLOCK.
