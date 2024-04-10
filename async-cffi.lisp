@@ -150,31 +150,29 @@ however, it used directly cffi and sets some parameters in a different way."
                    vec
                    *default-buffer-size*))
 
-(defun push-bytes (next-fn out-fn vector from to)
+(defun push-bytes (client next-fn out-fn vector from to)
   "Process octets in the VECTOR in the interval <FROM TO).
 
 Call OUT-FN on VECTOR, FROM TO. It returns number of processed octets (or 0 if
 none, or raises an error). If something is written, NEXT-FN is also called to do \"next stage\".
 
 Repeat on partial write."
-  ;; flush-fn ~ (move-encrypted-bytes ...)
-  ;; out-fn   ~ (ssl-write ...) + some error mgmt   + inc-buffer
   (loop
-    for written = (funcall out-fn vector from to)
+    for written = (funcall out-fn client vector from to)
     do
        (incf from written)
        (cond
          ((= from to)
-          (funcall next-fn)
+          (funcall next-fn client)
           (return from))
          ((plusp written)
-          (funcall next-fn))
+          (funcall next-fn client))
          ((zerop written)
           (return from)))))
 
 (defun encrypt-some (ssl vector from to)
   (with-pointer-to-vector-data (buffer vector)
-    (let ((res (ssl-write ssl buffer (- to from))))
+    (let ((res (ssl-write ssl (inc-pointer buffer from) (- to from))))
       (unless (plusp res)
         (let ((status (ssl-get-error ssl res)))
           (when  (not (member status
@@ -182,11 +180,11 @@ Repeat on partial write."
             (error "SSL write failed, status ~d" status))))
       res)))
 
-(defun encrypt-data-internal (ssl client data read-vector)
-  (push-bytes
-   (lambda () (move-encrypted-bytes (client-wbio client) client read-vector))
+(defun encrypt-data-internal (client data read-vector)
+  (push-bytes client
+   (lambda (client) (move-encrypted-bytes (client-wbio client) client read-vector))
 
-   (lambda (vector from to) (encrypt-some ssl vector from to))
+   (lambda (client vector from to) (encrypt-some (client-ssl client) vector from to))
    data 0 (client-encrypt-buf-size client)))
 
 (defun do-io-if-wanted (client ret)
@@ -256,7 +254,7 @@ Otherwise, use a temporary vector to write data "
   (unless (or (zerop (client-encrypt-buf-size client))
               (zerop (ssl-is-init-finished (client-ssl client))))
 
-    (encrypt-data-internal (client-ssl client) client
+    (encrypt-data-internal client
                            (client-encrypt-buf client)
                            (make-shareable-byte-vector *default-buffer-size*))))
 
@@ -265,24 +263,30 @@ Otherwise, use a temporary vector to write data "
         (append (client-write-buf client)
                 (list new-data))))
 
-(defun decrypt-socket-octets (client buffer size)
+(defun write-some-data** (client vector from to)
+  "Move encrypted data from the socket in the VECTOR to the OpenSSL engine. If
+something is written, try to make use of it."
+  (with-pointer-to-vector-data (buffer vector)
+    (let ((written (bio-write (client-rbio client)
+                              (inc-pointer buffer from)
+                              (- to from))))
+      (when (minusp written) (error "Bio-write failed"))
+      (maybe-init-ssl client)
+      (do-io-if-wanted client written)
+      written)))
+
+(defun decrypt-socket-octets (client vector size)
   "Process SIZE bytes received from the peer that are in the BUFFER.
 
 Fed them into the SSL object to be unencrypted, and let the client callback
-handle "
-  (loop for written = (bio-write (client-rbio client) buffer size)
-        when (minusp written) do (error "Bio-write failed")
-          do
-             (decf size written)
-             (setf buffer (inc-pointer buffer written))
-             (maybe-init-ssl client)
-             (loop while
-               (if (plusp (client-octets-needed client))
-                   (on-complete-ssl-data client)
-                   (funcall (client-io-on-read client) client)))
-             (do-io-if-wanted client written)
-        when (zerop size)
-          do (return)))
+handle the data."
+  (push-bytes client
+              (lambda (client)
+                (loop while
+                      (if (plusp (client-octets-needed client))
+                          (on-complete-ssl-data client)
+                          (funcall (client-io-on-read client) client))))
+              #'write-some-data** vector 0 size))
 
 (define-condition done (error)
   ()
@@ -301,12 +305,13 @@ handle "
   "Read data from client socket. If something is read (and it should, as this is
 called when there should be a data), it is passed to the tls buffer and
 decrypted."
-  (with-foreign-object (buffer :char *default-buffer-size*)
+  (let ((data (make-array *default-buffer-size* :element-type '(unsigned-byte 8))))
     (loop
       for i from 0 to *max-read-chunks*
-      for read = (read-2 (client-fd client) buffer *default-buffer-size*)
+      for read = (with-pointer-to-vector-data (buffer data)
+                 (read-2 (client-fd client) buffer *default-buffer-size*))
       while (plusp read)
-      do (decrypt-socket-octets client buffer read)
+      do (decrypt-socket-octets client data read)
          ;; todo: check also errno, do not rely on it being EAGAIN or EWOULDBLOCK.
       finally (when (zerop read) (signal 'done)))))
 
