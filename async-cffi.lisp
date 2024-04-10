@@ -74,6 +74,7 @@ DO-SOCK-WRITE called from PROCESS-CLIENT-FD on the callback."
   "Initial size of the vector holding data to encrypt.")
 (defvar *max-read-chunks* 10
   "Read up to this number of chunks before encrypting the output.")
+(defvar *default-buffer-size* 64)
 
 (defstruct client
   "Data of one client connection. This includes:
@@ -129,13 +130,64 @@ however, it used directly cffi and sets some parameters in a different way."
           (progn ,@body)
        (ssl-ctx-free ,ctx))))
 
-(defun move-encrypted-bytes (wbio client buffer vec)
+(defun pull-push-bytes (in-fn out-fn vec vec-size)
   "Move data encrypted by OpenSSL to the output socket queue."
   (declare (optimize speed (safety 1) (debug 0))
-           ((simple-array (unsigned-byte 8)) vec))
-  (loop for n fixnum = (bio-read wbio buffer *default-buffer-size*)
+           ((simple-array (unsigned-byte 8)) vec)
+           ((function ((simple-array (unsigned-byte 8)) fixnum) fixnum) in-fn out-fn))
+  (loop for n fixnum = (funcall in-fn vec vec-size)
         while (plusp n)
-        do (queue-encrypted-bytes client (subseq vec 0 n))))
+        ;; assumption: never fail
+        do (funcall out-fn vec n)))
+
+(defun move-encrypted-bytes (wbio client vec)
+  "Move data encrypted by OpenSSL to the output socket queue."
+  (pull-push-bytes (lambda (vec size)
+                     (with-pointer-to-vector-data (buffer vec)
+                       (bio-read wbio buffer size)))
+                   (lambda (vec size)
+                     (queue-encrypted-bytes client (subseq vec 0 size)))
+                   vec
+                   *default-buffer-size*))
+
+(defun push-bytes (next-fn out-fn vector from to)
+  "Process octets in the VECTOR in the interval <FROM TO).
+
+Call OUT-FN on VECTOR, FROM TO. It returns number of processed octets (or 0 if
+none, or raises an error). If something is written, NEXT-FN is also called to do \"next stage\".
+
+Repeat on partial write."
+  ;; flush-fn ~ (move-encrypted-bytes ...)
+  ;; out-fn   ~ (ssl-write ...) + some error mgmt   + inc-buffer
+  (loop
+    for written = (funcall out-fn vector from to)
+    do
+       (incf from written)
+       (cond
+         ((= from to)
+          (funcall next-fn)
+          (return from))
+         ((plusp written)
+          (funcall next-fn))
+         ((zerop written)
+          (return from)))))
+
+(defun encrypt-some (ssl vector from to)
+  (with-pointer-to-vector-data (buffer vector)
+    (let ((res (ssl-write ssl buffer (- to from))))
+      (unless (plusp res)
+        (let ((status (ssl-get-error ssl res)))
+          (when  (not (member status
+                              (list ssl-error-none ssl-error-want-write ssl-error-want-read)))
+            (error "SSL write failed, status ~d" status))))
+      res)))
+
+(defun encrypt-data-internal (ssl client data read-vector)
+  (push-bytes
+   (lambda () (move-encrypted-bytes (client-wbio client) client read-vector))
+
+   (lambda (vector from to) (encrypt-some ssl vector from to))
+   data 0 (client-encrypt-buf-size client)))
 
 (defun do-io-if-wanted (client ret)
   "Check real error after a call to SSL_connect, SSL_accept,
@@ -153,11 +205,9 @@ Raise error otherwise."
       (case err-code
         ((#.ssl-error-want-read #.ssl-error-want-write)
          (let* ((vec (make-shareable-byte-vector *default-buffer-size*)))
-           (with-pointer-to-vector-data (buffer vec)
-             (declare (dynamic-extent buffer))
-             (move-encrypted-bytes wbio client buffer vec)
-             (when (zerop (bio-test-flags wbio bio-flags-should-retry))
-               (error "Should retry should be set.")))))
+           (move-encrypted-bytes wbio client vec)
+           (when (zerop (bio-test-flags wbio bio-flags-should-retry))
+             (error "Should retry should be set."))))
         (#.ssl-error-none nil)
         (#.ssl-error-ssl (process-ssl-errors))
         (t (cerror "Ignore" "SSL error ~d during write attempt" err-code))))))
@@ -205,32 +255,10 @@ Do nothing if no data to encrypt or SSL not yet initialized.
 Otherwise, use a temporary vector to write data "
   (unless (or (zerop (client-encrypt-buf-size client))
               (zerop (ssl-is-init-finished (client-ssl client))))
-    (let ((data (client-encrypt-buf client))
-          (read-vector (make-shareable-byte-vector *default-buffer-size*)))
-      (with-pointer-to-vector-data (read-buffer read-vector)
-        (declare (dynamic-extent read-buffer))
-        (with-pointer-to-vector-data (buffer data)
-          (declare (dynamic-extent buffer))
-          (loop
-            with len = (client-encrypt-buf-size client)
-            and all-written = 0
-            and ssl = (client-ssl client)
-            for written = (ssl-write ssl buffer len)
-            for status = (ssl-get-error ssl written)
-            do
-               (cond
-                 ((= len written)
-                  (move-encrypted-bytes (client-wbio client)  client read-buffer read-vector)
-                  (return (+ len all-written)))
-                 ((plusp written)
-                  (incf all-written written)
-                  (setf buffer (inc-pointer buffer written))
-                  (decf len written)
-                  (move-encrypted-bytes (client-wbio client) read-buffer client read-vector))
-                 ((not (member status (list ssl-error-none ssl-error-want-write ssl-error-want-read)))
-                  (error "SSL write failed, status ~d" status))
-                 ((zerop written)
-                  (return all-written)))))))))
+
+    (encrypt-data-internal (client-ssl client) client
+                           (client-encrypt-buf client)
+                           (make-shareable-byte-vector *default-buffer-size*))))
 
 (defun queue-encrypted-bytes (client new-data)
   (setf (client-write-buf client)
@@ -268,8 +296,6 @@ handle "
   (print-unreadable-object (object stream :type t :identity nil)
     (format stream "~x: ~a" (get-code object)
             (ssl-err-reason-error-string (get-code object)))))
-
-(defvar *default-buffer-size* 64)
 
 (defun process-data-on-socket (client)
   "Read data from client socket. If something is read (and it should, as this is
