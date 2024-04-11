@@ -19,6 +19,8 @@
 (constant (c-pollrdhup "POLLRDHUP") :optional t)
 (constant (c-pollnval "POLLNVAL"))
 
+(constant (eagain "EAGAIN"))
+
 (include "openssl/ssl.h")
 (constant (ssl-error-none "SSL_ERROR_NONE"))
 (constant (ssl-error-want-write "SSL_ERROR_WANT_WRITE"))
