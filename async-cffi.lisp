@@ -688,33 +688,3 @@ It means, account for COUNT bytes to ignore in OCTETS-NEEDED slot and if done, p
       (setf (client-octets-needed client) (- count)
             (client-io-on-read client) #'pull-from-ignore))
   t)
-
-;;;; version with async
-(defmethod do-new-connection (socket (tls (eql :v3)) (dispatch-method (eql :async)))
-  "Handle new connections using cl-async event loop.
-
-Pros: This version can be run in one thread and process many clients.
-
-Cons: requires a specific C library, and the implementation as-is depends on
-SBCL internal function - we re-use the file descriptor of socket created by
-usocket package, as otherwise access to the port of server is complicated."
-  (let ((ctx (make-ssl-context))
-        (s-mem (bio-s-mem)))
-    (cl-async:start-event-loop
-     (lambda ()
-       (cl-async:tcp-server nil nil
-                            (lambda (socket bytes)
-                              (with-pointer-to-vector-data (p bytes)
-                                (decrypt-socket-octets (cl-async:socket-data socket)
-                                                       p
-                                                       (length bytes))
-                                (let* ((client (cl-async:socket-data socket))
-                                       (concated (concatenate* (client-write-buf client))))
-                                  (cl-async:write-socket-data  socket concated))))
-                            :connect-cb (lambda (socket)
-                                          (setf (cl-async:socket-data socket)
-                                                (make-client-object socket ctx s-mem)))
-                            :event-cb (lambda (err) (format t "--> ~s~%" err))
-                            :fd (sb-bsd-sockets:socket-file-descriptor
-                                 (usocket:socket socket))))))
-  (invoke-restart 'kill-server))
