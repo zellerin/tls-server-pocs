@@ -134,8 +134,7 @@ usocket package, as otherwise access to the port of server is complicated."
                  :event-cb (lambda (err) (format t "--> ~s~%" err))
                  :fd (sb-bsd-sockets:socket-file-descriptor
                       (usocket:socket socket)))))
-  ;; TODO: use kill-server function
-  (invoke-restart 'kill-server))
+  (kill-server))
 
 (defmethod do-new-connection (socket (tls (eql :tls)) (dispatch-method (eql :async)))
   "Handle new connections using cl-async event loop.

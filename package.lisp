@@ -112,6 +112,7 @@ details of the implementations."
 - performance regression for async-custom for larger pipeline,
 - non-performance of cl-async::tcp-ssl-server"
   "Try to fit the observer performance to some formula,"
+  "Do some measurements for real clients and specific cases"
   "Add test cases and name existing ones better. Maybe there is a room for
 a [better process](https://doc.zellerin.cz/Integrate%20test%20framework.html)
 

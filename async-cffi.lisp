@@ -93,9 +93,11 @@ DO-SOCK-WRITE called from PROCESS-CLIENT-FD on the callback."
   "Initial size of the vector holding data to encrypt.")
 (defvar *max-read-chunks* 10
   "Read up to this number of chunks before encrypting the output.")
+
 (defvar *default-buffer-size* 512)
 
-(defstruct (client (:print-object
+(defstruct (client  (:constructor make-client%)
+            (:print-object
                     (lambda (object out)
                       (format out "#<client fd ~d, ~d octets to ~a>" (client-fd object)
                               (client-octets-needed object) (client-io-on-read object)))))
@@ -108,10 +110,17 @@ DO-SOCK-WRITE called from PROCESS-CLIENT-FD on the callback."
 - Encrypted octets to send to the file descriptor (ENCRYPT-BUF),
 - Callback function when read data are available (IO-ON-READ).
 - OCTETS-NEEDED number of octets required by IO-ON-READ, if FRAGMENT-OK this is an upper limit."
-  fd ssl rbio wbio write-buf
-  (encrypt-buf (make-array *encrypt-buf-size* :element-type '(unsigned-byte 8)))
-  io-on-read fdset-idx octets-needed fragment-ok
-  (encrypt-buf-size 0))
+  (fd -1 :type fixnum :read-only t)
+  (ssl (null-pointer) :type cffi:foreign-pointer :read-only nil) ; mostly RO, but invalidated afterwards
+  (rbio (null-pointer) :type cffi:foreign-pointer :read-only t)
+  (wbio (null-pointer) :type cffi:foreign-pointer :read-only t)
+  (write-buf nil :type (or null cons))
+  (encrypt-buf (make-array *encrypt-buf-size* :element-type '(unsigned-byte 8))
+   :type (simple-array (unsigned-byte 8)))
+  (io-on-read #'process-client-hello :type compiled-function)
+  (fdset-idx 0 :type fixnum :read-only nil) ; could be RO, but...
+  (octets-needed +client-preface-length+ :type fixnum)
+  (encrypt-buf-size 0 :type fixnum))
 
 (defun use-pem-for (context fn path error)
   (setf path (merge-pathnames path))
@@ -260,8 +269,15 @@ Raise error otherwise."
   (when (zerop (ssl-is-init-finished (client-ssl client)))
     (do-io-if-wanted client (ssl-accept (client-ssl client)))))
 
+(defun doubled-buffer (buffer)
+  "Return a larger buffer with same initial data as the provided one."
+  (let ((new (make-array (* 2 (length buffer))
+                         :element-type '(unsigned-byte 8))))
+    (replace new buffer)
+    new))
+
 (defun send-unencrypted-bytes (client new-data)
-  "Process new data to be encrypted and sent to client.
+  "Collect new data to be encrypted and sent to client.
 
 Data are just concatenated to the ENCRYPT-BUF. Later, they would be encrypted
 and passed."
@@ -283,12 +299,11 @@ and passed."
 (defun encrypt-data (client)
   "Encrypt data in client's ENCRYPT-BUF.
 
-Do nothing if no data to encrypt or SSL not yet initialized.
+Do nothing if no data to encrypt or SSL not yet initialized (and return zero).
 
 Otherwise, use a temporary vector to write data "
   (unless (or (zerop (client-encrypt-buf-size client))
               (zerop (ssl-is-init-finished (client-ssl client))))
-
     (encrypt-data-internal client
                            (client-encrypt-buf client)
                            (make-shareable-byte-vector *default-buffer-size*))))
@@ -432,12 +447,12 @@ Read if you can, write if you can, announce DONE when done."
 
 (defun make-client-object (socket ctx s-mem)
   "Create new CLIENT object suitable for TLS server."
-  (let* ((client (make-client :fd socket
-                              :rbio (bio-new s-mem)
-                              :wbio (bio-new s-mem)
-                              :ssl (ssl-new ctx)
-                              :io-on-read #'process-client-hello
-                              :octets-needed +client-preface-length+)))
+  (let* ((client (make-client% :fd socket
+                               :rbio (bio-new s-mem)
+                               :wbio (bio-new s-mem)
+                               :ssl (ssl-new ctx)
+                               :io-on-read #'process-client-hello
+                               :octets-needed +client-preface-length+)))
     (ssl-set-accept-state (client-ssl client))
     (ssl-set-bio (client-ssl client) (client-rbio client) (client-wbio client))
     client))
@@ -503,9 +518,9 @@ Read if you can, write if you can, announce DONE when done."
 
 (defun close-client-connection (fdset client)
   (setf *clients* (remove client *clients*))
-  (when (client-ssl client)
+  (unless (null-pointer-p (client-ssl client))
     (ssl-free (client-ssl client)))     ; BIOs are closed automatically
-  (setf (client-ssl client) nil)
+  (setf (client-ssl client) (null-pointer))
   (push (client-fdset-idx client) *empty-fdset-items*)
   (set-fd-slot fdset -1 0 (client-fdset-idx client))
   (close-fd (client-fd client)))
