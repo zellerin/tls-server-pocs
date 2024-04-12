@@ -188,7 +188,7 @@ available. Raise an error on error." size source vector)
          ,(format nil "Move octets from ~a to the ~a.~2%Return 0 when no data are
 available. Raise an error on error." vector destination)
          ,declaration
-         (let ((res ,@body))
+         (let ((res (progn ,@body)))
            (when *log-writes* (format t "~28T~4a --> ~a~%" res ',destination))
            res))
        (setf (get ',name 'destination) ',destination))))
@@ -249,13 +249,14 @@ Finish when the last read reads nothing.
 Assumes writes cannot fail."
   (declare (optimize speed (safety 1) (debug 0))
            ((simple-array (unsigned-byte 8)) vec)
-           ((function (t t fixnum) fixnum) in-fn out-fn))
+           (reader in-fn)
+           (writer out-fn))
   (loop for n fixnum = (funcall in-fn client vec vec-size)
         while (plusp n)
         ;; assumption: never fail
         do
         #+nil (format t "~a -> ~a: ~d octets~%" in-fn out-fn n)
-              (funcall out-fn client vec n)))
+              (funcall out-fn client vec 0 n)))
 
 (defun move-encrypted-bytes (client vec)
   "Move data encrypted by OpenSSL to the output socket queue."
@@ -378,12 +379,12 @@ Otherwise, use a temporary vector to write data "
                            (client-encrypt-buf client)
                            (make-shareable-byte-vector *default-buffer-size*))))
 
-(defun queue-encrypted-bytes (client new-data size)
+(define-writer queue-encrypted-bytes encrypt-buffer (client new-data from to)
   (setf (client-write-buf client)
         (append (client-write-buf client)
-                (list (subseq new-data 0 size))))
+                (list (subseq new-data from to))))
   (write-data-to-socket client)
-  size)
+  (- to from))
 
 (define-writer write-octets-to-decrypt openssl-to-decrypt (client vector from to)
   (with-pointer-to-vector-data (buffer vector)
@@ -395,7 +396,7 @@ Otherwise, use a temporary vector to write data "
       (do-io-if-wanted client written)
       written)))
 
-(defun decrypt-socket-octets (client vector size)
+(defun decrypt-socket-octets (client vector from to)
   "Process SIZE bytes received from the peer that are in the BUFFER.
 
 Fed them into the SSL object to be unencrypted, and let the client callback
@@ -407,7 +408,7 @@ handle the data."
                       (if (plusp (client-octets-needed client))
                           (on-complete-ssl-data client)
                           (funcall (client-io-on-read client) client))))
-              #'write-octets-to-decrypt vector 0 size))
+              #'write-octets-to-decrypt vector from to))
 
 (define-condition done (error)
   ()
@@ -676,18 +677,18 @@ Raise error if only part of data is available. FIXME: process that anyway"
       (ssl-read client vec (min size count))
       0)))
 
-(defun really-ignore (client vec count)
+(defun really-ignore (client vec from to)
   "Ignore COUNT bytes.
 
 It means, account for COUNT bytes to ignore in OCTETS-NEEDED slot and if done, process to read the next header."
   (declare (ignorable client vec))
 
-  (when (zerop (incf (client-octets-needed client) count))
+  (when (zerop (incf (client-octets-needed client) (- to from)))
 #+nil    (format t "Ignored: ~s~%" (map 'string 'code-char vec))
     (setf (client-io-on-read client) #'process-header
           (client-octets-needed client) 9)
     (on-complete-ssl-data client))
-  count)
+  (- to from))
 
 (defun pull-from-ignore (client) ; name me
   (let ((size (- (client-octets-needed client))))
