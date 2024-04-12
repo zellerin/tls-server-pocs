@@ -160,6 +160,52 @@ however, it used directly cffi and sets some parameters in a different way."
      (unwind-protect
           (progn ,@body)
        (ssl-ctx-free ,ctx))))
+
+;; Moving data around
+(deftype reader () '(function (t t fixnum) fixnum))
+(deftype writer () '(function (t t fixnum) fixnum))
+
+(defmacro define-reader (name source args &body body)
+  (destructuring-bind (client vector size) args
+    (declare (ignore client))
+    `(progn
+       (defun ,name ,args
+         ,(format nil "Move up to ~a octets from ~a to the ~a.~2%Return 0 when no data are
+available. Raise an error on error." size source vector)
+         ,@body)
+       (setf (get ',name 'source) ',source))))
+
+(defmacro define-writer (name destination args &body body)
+  (destructuring-bind (client vector from to) args
+    (declare (ignore client from to))
+    `(progn
+       (defun ,name ,args
+         ,(format nil "Move octets from ~a to the ~a.~2%Return 0 when no data are
+available. Raise an error on error." vector destination)
+         ,@body)
+      (setf (get ',name 'destination) ',destination))))
+
+(define-reader read-from-peer peer-in (client vec vec-size)
+  (with-pointer-to-vector-data (buffer vec)
+    (let ((read (read-2 (client-fd client) buffer vec-size)))
+      (cond ((plusp read) read)
+            ((zerop read) 0)
+            ((/= -1 read) (error "This cannot happen #2"))
+            ((/= (errno) 11)
+             (print "Read error: ~a" (strerror (errno)))
+             (signal 'done))
+            (t 0)))))
+
+(define-writer write-to-decrypt ssl-in (ssl vec from to)
+  (with-pointer-to-vector-data (buffer vec)
+    (let ((res (ssl-write ssl (inc-pointer buffer from) (- to from))))
+      (if (plusp res) res
+          (let ((err (ssl-get-error ssl res)))
+            (if (or (eql err ssl-error-want-write)
+                    (eql err ssl-error-want-read))
+                0
+                (error "SSL write error ~a" err)))))))
+
 
 (defun pull-push-bytes (client in-fn out-fn vec vec-size)
   "Read data using IN-FN and write them out using OUT-FN.
@@ -178,9 +224,8 @@ Assumes writes cannot fail."
         while (plusp n)
         ;; assumption: never fail
         do
-#+nil           (format t "~a -> ~a: ~d octets~%" in-fn out-fn n)
+     #+nil (format t "~a -> ~a: ~d octets~%" in-fn out-fn n)
            (funcall out-fn client vec n)))
-
 
 (defun move-encrypted-bytes (client vec)
   "Move data encrypted by OpenSSL to the output socket queue."
@@ -353,16 +398,6 @@ handle the data."
   (print-unreadable-object (object stream :type t :identity nil)
     (format stream "~x: ~a" (get-code object)
             (ssl-err-reason-error-string (get-code object)))))
-
-(defun read-from-peer (client vec vec-size)
-  (with-pointer-to-vector-data (buffer vec)
-    (let ((read (read-2 (client-fd client) buffer vec-size)))
-      (cond ((plusp read) read)
-            ((zerop read) 0)
-            ((/= -1 read) (error "This cannot happen #2"))
-            ((/= (errno) 11)
-             (error "Read error: ~a" (strerror (errno))))
-            (t 0)))))
 
 #+new
 (defun process-data-on-socket (client)
