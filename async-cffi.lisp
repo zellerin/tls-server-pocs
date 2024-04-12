@@ -25,7 +25,7 @@
 (defcfun "SSL_free" :int (ssl :pointer))
 (defcfun "SSL_is_init_finished" :int (ssl :pointer))
 (defcfun "SSL_new" :pointer (bio-method :pointer))
-(defcfun "SSL_read" :int (ssl :pointer) (buffer :pointer) (bufsize :int))
+(defcfun ("SSL_read" ssl-read%) :int (ssl :pointer) (buffer :pointer) (bufsize :int))
 (defcfun "SSL_set_accept_state" :pointer (ssl :pointer))
 (defcfun "SSL_set_bio" :void (ssl :pointer) (rbio :pointer) (wbio :pointer))
 (defcfun "SSL_write" :int (ssl :pointer) (buffer :pointer) (bufsize :int))
@@ -41,13 +41,6 @@
 (defcfun "fcntl" :int (fd :int) (cmd :int) (value :int))
 (defcfun "accept" :int (fd :int) (addr :pointer) (addrlen :int))
 
-(defun read-encrypted-from-openssl (client vec size)
-  (declare ((simple-array (unsigned-byte 8)) vec)
-           (fixnum size)
-           (optimize speed (safety 1)))
-  (with-pointer-to-vector-data (buffer vec)
-    (bio-read% (client-wbio client) buffer size)))
-
 (defun strerror (errnum)
   (let ((str (make-array 256 :element-type 'character)))
     (with-pointer-to-vector-data (buffer str)
@@ -55,6 +48,7 @@
 
 (defun errno ()
   (mem-ref (errno%) :int))
+
 
 
 (mgl-pax:defsection  @async-server
@@ -163,27 +157,41 @@ however, it used directly cffi and sets some parameters in a different way."
 
 ;; Moving data around
 (deftype reader () '(function (t t fixnum) fixnum))
-(deftype writer () '(function (t t fixnum) fixnum))
+(deftype writer () '(function (t t t fixnum) fixnum))
 
-(defmacro define-reader (name source args &body body)
+
+(defvar *log-reads* t)
+(defvar *log-writes* t)
+
+(defmacro define-reader (name source args &body body &aux declaration)
+  (when (eq (caar body) 'declare)
+    (setq declaration (pop body)))
   (destructuring-bind (client vector size) args
     (declare (ignore client))
     `(progn
        (defun ,name ,args
          ,(format nil "Move up to ~a octets from ~a to the ~a.~2%Return 0 when no data are
 available. Raise an error on error." size source vector)
-         ,@body)
+         ,declaration
+         (let ((res ,@body))
+           (when *log-reads* (format t "~23a --> ~a~%" ',source res))
+           res))
        (setf (get ',name 'source) ',source))))
 
-(defmacro define-writer (name destination args &body body)
+(defmacro define-writer (name destination args &body body &aux declaration)
   (destructuring-bind (client vector from to) args
     (declare (ignore client from to))
+    (when (eq (caar body) 'declare)
+      (setq declaration (pop body)))
     `(progn
        (defun ,name ,args
          ,(format nil "Move octets from ~a to the ~a.~2%Return 0 when no data are
 available. Raise an error on error." vector destination)
-         ,@body)
-      (setf (get ',name 'destination) ',destination))))
+         ,declaration
+         (let ((res ,@body))
+           (when *log-writes* (format t "~28T~4a --> ~a~%" res ',destination))
+           res))
+       (setf (get ',name 'destination) ',destination))))
 
 (define-reader read-from-peer peer-in (client vec vec-size)
   (with-pointer-to-vector-data (buffer vec)
@@ -206,6 +214,28 @@ available. Raise an error on error." vector destination)
                 0
                 (error "SSL write error ~a" err)))))))
 
+(define-reader ssl-read input-ssl (client vec size)
+  (let ((res
+          (with-pointer-to-vector-data (buffer vec)
+            (ssl-read% (client-ssl client) buffer size))))
+    (if (plusp res) res
+        (let ((err (ssl-get-error (client-ssl client) res)))
+          (if (or (eql err ssl-error-want-write)
+                  (eql err ssl-error-want-read))
+              0
+              (error "SSL write error ~a" err))))))
+
+(define-reader read-encrypted-from-openssl bio-out (client vec size)
+  (declare ((simple-array (unsigned-byte 8)) vec)
+           (fixnum size))
+  (with-pointer-to-vector-data (buffer vec)
+    (let ((res (bio-read% (client-wbio client) buffer size)))
+      (cond ((plusp res) res)
+            ((zerop (bio-test-flags (client-wbio client) bio-flags-should-retry))
+             (error "Failed to read from bio, and cant retry"))
+            (t 0)))))
+
+
 
 (defun pull-push-bytes (client in-fn out-fn vec vec-size)
   "Read data using IN-FN and write them out using OUT-FN.
@@ -224,8 +254,8 @@ Assumes writes cannot fail."
         while (plusp n)
         ;; assumption: never fail
         do
-     #+nil (format t "~a -> ~a: ~d octets~%" in-fn out-fn n)
-           (funcall out-fn client vec n)))
+        #+nil (format t "~a -> ~a: ~d octets~%" in-fn out-fn n)
+              (funcall out-fn client vec n)))
 
 (defun move-encrypted-bytes (client vec)
   "Move data encrypted by OpenSSL to the output socket queue."
@@ -252,14 +282,9 @@ Repeat on partial write."
          ((zerop written)
           (return from)))))
 
-(defun encrypt-some (ssl vector from to)
-  "Send data in the VECTOR to the SSL to process.
-
-Return number of processed bytes.
-
-Raise an error when some unexpected situation happens."
-  (with-pointer-to-vector-data (buffer vector)
-    (let ((res (ssl-write ssl (inc-pointer buffer from) (- to from))))
+(define-writer encrypt-some output-ssl (ssl vector from to)
+    (with-pointer-to-vector-data (buffer vector)
+      (let ((res (ssl-write ssl (inc-pointer buffer from) (- to from))))
       (if (plusp res) res
           (let ((status (ssl-get-error ssl res)))
             (warn "ssl-write not full: ~d" res)
@@ -360,9 +385,7 @@ Otherwise, use a temporary vector to write data "
   (write-data-to-socket client)
   size)
 
-(defun write-octets-to-decrypt (client vector from to)
-  "Move encrypted data from the socket in the VECTOR to the OpenSSL engine. If
-something is written, try to make use of it."
+(define-writer write-octets-to-decrypt openssl-to-decrypt (client vector from to)
   (with-pointer-to-vector-data (buffer vector)
     (let ((written (bio-write (client-rbio client)
                               (inc-pointer buffer from)
@@ -433,7 +456,7 @@ decrypted."
              (incf i (length v))
           finally (return res))))
 
-(defun send-to-peer (client vector from to)
+(define-writer send-to-peer peer-out (client vector from to)
   (with-pointer-to-vector-data (buffer vector)
     (let ((res (write-2 (client-fd client)
                         (inc-pointer buffer from)
@@ -443,9 +466,8 @@ decrypted."
                   (= err 11))
              0)
             ((= res -1)
-             (error "Error during write: ~d (~a)" err (strerror err))
              ;; e.g., broken pipe
-             )
+             (error "Error during write: ~d (~a)" err (strerror err)))
             ((plusp res) res)
             (t (error "This cant happen (#1)"))))))
 
@@ -609,17 +631,15 @@ from C code."
 
 Raise error if only part of data is available. FIXME: process that anyway"
   (let ((vec (make-shareable-byte-vector +client-preface-length+))
-        (ssl (client-ssl client))
         (fn (client-io-on-read client))
         (octets (client-octets-needed client)))
-    (with-pointer-to-vector-data (buffer vec)
       ;; TODO: check first with SSL_pending?
-      (let ((read (ssl-read ssl buffer octets)))
-        (cond
-          ((not (plusp read)) nil)          ; just return and try again
-          ((/= read octets)
-           (error "Read ~d octets. This is not enough octets, why?~%~s~%" read (subseq vec 0 read)))
-          (t (funcall fn client vec) t))))))
+    (let ((read (ssl-read client vec octets)))
+      (cond
+        ((not (plusp read)) nil)          ; just return and try again
+        ((/= read octets)
+         (error "Read ~d octets. This is not enough octets, why?~%~s~%" read (subseq vec 0 read)))
+        (t (funcall fn client vec) t)))))
 
 (defun process-client-hello (client vec)
   (cond ((equalp vec +client-preface-start+)
@@ -653,8 +673,7 @@ Raise error if only part of data is available. FIXME: process that anyway"
 (defun really-ignore-bytes (client vec count)
   (let ((size (- (client-octets-needed client))))
     (if (plusp size)
-      (with-pointer-to-vector-data (buffer vec)
-        (ssl-read (client-ssl client) buffer (min size count)))
+      (ssl-read client vec (min size count))
       0)))
 
 (defun really-ignore (client vec count)
