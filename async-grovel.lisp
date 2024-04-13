@@ -2,6 +2,8 @@
 (include "poll.h")
 (include "fcntl.h")
 (include "sys/socket.h")
+(include "netinet/in.h")
+(include "netinet/tcp.h")
 
 (cstruct pollfd "struct pollfd"
          (fd "fd" :type :int)
@@ -11,6 +13,9 @@
 (constant (f-setfl "F_SETFL"))
 (constant (f-getfl "F_GETFL"))
 (constant (o-nonblock "O_NONBLOCK"))
+(constant (tcp-nodelay "TCP_NODELAY"))
+(constant (tcp-cork "TCP_CORK"))
+(constant (ipproto-tcp "IPPROTO_TCP"))
 
 (constant (c-pollin "POLLIN"))
 (constant (c-pollout "POLLOUT"))
