@@ -17,9 +17,11 @@ server types implement appropriate methods to ensure desired behaviour."
   (*buffer* variable))
 
 (defun create-server (port tls dispatch-method
+                      &rest keys
                       &key
                         (host "127.0.0.1")
-                        (announce-url-callback (constantly nil)))
+                        (announce-url-callback (constantly nil))
+                        &allow-other-keys)
   "Create a server on HOST and PORT that handles connections (possibly with TLS) using
 DISPATCH-METHOD.
 
@@ -37,8 +39,10 @@ DISPATCH-METHOD as parameters."
                                                       :reuse-address t
                                                       :element-type '(unsigned-byte 8))
         (funcall announce-url-callback (url-from-socket listening-socket host tls))
+        (remf keys :host)
+        (remf keys :announce-url-callback)
         (loop
-          (do-new-connection listening-socket tls dispatch-method)))
+          (apply 'do-new-connection listening-socket tls dispatch-method keys)))
     (kill-server (&optional value) :report "Kill server" value)))
 
 (defun url-from-socket (socket host tls)
@@ -59,7 +63,7 @@ This is to be used as callback fn on an open server for testing it."
                  :port port
                  :host host))
 
-(defgeneric do-new-connection (listening-socket tls dispatch-method)
+(defgeneric do-new-connection (listening-socket tls dispatch-method &key)
   (:documentation
    "This method is implemented for the separate connection types. It waits on
 new (possibly tls) connection to the LISTENING-SOCKET and start handling it

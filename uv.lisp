@@ -118,7 +118,7 @@ Originally, we have some SOCKET-DATA available, they can be read. Then, we might
                            :event-cb (lambda (err) (format t "--> ~s~%" err)))))))
 
 #+sbcl
-(defmethod do-new-connection (socket (tls (eql nil)) (dispatch-method (eql :async)))
+(defmethod do-new-connection (socket (tls (eql nil)) (dispatch-method (eql :async)) &key)
   "Handle new connections using cl-async event loop.
 
 Pros: This version can be run in one thread and process many clients.
@@ -136,7 +136,7 @@ usocket package, as otherwise access to the port of server is complicated."
                       (usocket:socket socket)))))
   (kill-server))
 
-(defmethod do-new-connection (socket (tls (eql :tls)) (dispatch-method (eql :async)))
+(defmethod do-new-connection (socket (tls (eql :tls)) (dispatch-method (eql :async)) &key)
   "Handle new connections using cl-async event loop.
 
 Pros: This version can be run in one thread and process many clients.
@@ -158,7 +158,7 @@ usocket package, as otherwise access to the port of server is complicated."
   ;; there is an outer loop in create-server that we want to skip
   (invoke-restart 'kill-server))
 
-(defmethod do-new-connection (socket (tls (eql :nonblock)) (dispatch-method (eql :async)))
+(defmethod do-new-connection (socket (tls (eql :nonblock)) (dispatch-method (eql :async)) &key)
   "Handle new connections using cl-async event loop.
 
 Pros: This version can be run in one thread and process many clients.

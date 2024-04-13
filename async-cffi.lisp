@@ -611,7 +611,8 @@ Read if you can, write if you can, announce DONE when done."
           (dolist (client *clients*)
             (close-client-connection fdset client)))))))
 
-(defmethod do-new-connection (socket (tls (eql :tls)) (dispatch-method (eql :async-custom)))
+(defmethod do-new-connection (socket (tls (eql :tls)) (dispatch-method (eql :async-custom))
+                              &key verbose)
   "Handle new connections by adding pollfd to and then polling.
 
 When poll indicates available data, process them with openssl using BIO. Data to
