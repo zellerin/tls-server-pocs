@@ -4,6 +4,7 @@
 (include "sys/socket.h")
 (include "netinet/in.h")
 (include "netinet/tcp.h")
+(include "errno.h")
 
 (cstruct pollfd "struct pollfd"
          (fd "fd" :type :int)
