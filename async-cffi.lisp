@@ -389,7 +389,7 @@ Otherwise, use a temporary vector to write data "
     (encrypt-data-internal client
                            (client-encrypt-buf client))))
 
-(define-writer queue-encrypted-bytes encrypt-buffer (client new-data from to)
+(define-writer queue-encrypted-bytes write-buffer (client new-data from to)
   (setf (client-write-buf client)
         (append (client-write-buf client)
                 (list (subseq new-data from to))))
