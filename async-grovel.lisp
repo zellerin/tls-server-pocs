@@ -32,6 +32,9 @@
 (constant (ssl-error-want-write "SSL_ERROR_WANT_WRITE"))
 (constant (ssl-error-want-read "SSL_ERROR_WANT_READ"))
 (constant (ssl-error-ssl "SSL_ERROR_SSL"))
+(constant (ssl-error-syscall "SSL_ERROR_SYSCALL"))
+(constant (ssl-error-zero-return "SSL_ERROR_ZERO_RETURN"))
+
 (constant (ssl-filetype-pem "SSL_FILETYPE_PEM"))
 (constant (tls-1.2-version "TLS1_2_VERSION"))
 (constant (ssl-op-all "SSL_OP_ALL"))
