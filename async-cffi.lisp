@@ -1,8 +1,19 @@
 (in-package #:tls-server/async/tls)
 
+;;;; temporary
 #+sbcl
 (eval-when (:compile-toplevel :load-toplevel)
-  (declaim (optimize sb-cover:store-coverage-data debug safety))) ; temp
+  (require 'sb-cover))
+
+#+sbcl
+(eval-when (:compile-toplevel :load-toplevel)
+  (declaim (optimize sb-cover:store-coverage-data debug safety)))
+
+(defun log-data-move (client from to requested moved)
+  (format t "~6,1f ~23a -- ~4a/~4a --> ~a~%" (timestamp client)
+          (or from "") moved requested (or to "")))
+
+;;;;
 
 (define-foreign-library openssl (:unix "libssl.so"))
 (use-foreign-library openssl)
@@ -165,8 +176,8 @@ however, it used directly cffi and sets some parameters in a different way."
 (deftype writer () '(function (t t t fixnum) fixnum))
 
 
-(defvar *log-reads* nil)
-(defvar *log-writes* nil)
+(defvar *logger* #'log-data-move)
+
 (defun timestamp (client)
   (round (* 1000.0 (- (get-internal-real-time) (client-start-time client)))
          internal-time-units-per-second))
@@ -183,8 +194,7 @@ however, it used directly cffi and sets some parameters in a different way."
 available. Raise an error on error." size source vector)
          ,declaration
          (let ((res ,@body))
-           (when *log-reads* (format t "~6,1f ~23a --> ~a/~a~%" (timestamp ,client)
-                                     ',source res ,size))
+           (funcall *logger* ,client ',source nil res ,size)
            res))
        (setf (get ',name 'source) ',source))))
 
@@ -202,10 +212,7 @@ available. Raise an error on error." size source vector)
 available. Raise an error on error." vector destination)
          ,declaration
          (let ((res (progn ,@body)))
-           (when *log-writes* (format t "~6,1f ~35T~4a/~4a --> ~a~%"
-                                      (timestamp ,client)
-                                      res (- to from)
-                                      ',destination))
+           (funcall *logger* ,client nil ',destination res (- to from))
            res))
        (setf (get ',name 'destination) ',destination))))
 
@@ -398,6 +405,7 @@ SSL_accept may want to read or write something. Writing is handled by DO-IO-IF-W
 
 Data are just concatenated to the ENCRYPT-BUF. Later, they would be encrypted
 and passed."
+  (funcall *logger* client 'application 'ssl-out (length new-data) (length new-data))
   (let ((old-fp (client-encrypt-buf-size client)))
     (unless *collect-for-write*
       (when (zerop old-fp)
@@ -411,7 +419,7 @@ and passed."
     (loop
       while (> (client-encrypt-buf-size client) (length (client-encrypt-buf client)))
       do (setf (client-encrypt-buf client)
-            (double-buffer-size (client-encrypt-buf client))))
+               (double-buffer-size (client-encrypt-buf client))))
     (replace (client-encrypt-buf client) new-data :start1 old-fp)))
 
 (defun encrypt-data (client)
@@ -656,8 +664,7 @@ them).
 
 This in the end does not use usocket, async nor cl+ssl - it is a direct rewrite
 from C code."
-  (let ((*log-writes* verbose)
-        (*log-reads* verbose))
+  (let ((*logger* (if verbose #'log-data-move (constantly nil))))
     (serve-tls socket))
   ;; there is an outer loop in create-server that we want to skip
   (invoke-restart 'kill-server))
@@ -695,7 +702,7 @@ Raise error if only part of data is available. FIXME: process that anyway"
          (type (get-frame-type header)))
     (declare ((unsigned-byte 8) type)
              (frame-size frame-size))
-#+nil      (format t "Header read: type ~d, expecting frame with ~d octets~%" type frame-size)
+    #+nil      (format t "Header read: type ~d, expecting frame with ~d octets~%" type frame-size)
 
     (when (= type +goaway-frame-type+)
       ;; TODO: handle go-away frame
