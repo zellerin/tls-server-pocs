@@ -63,6 +63,10 @@ This is to be used as callback fn on an open server for testing it."
                  :port port
                  :host host))
 
+(define-condition unsupported-server-setup (error)
+  ((tls             :accessor get-tls             :initarg :tls)
+   (dispatch-method :accessor get-dispatch-method :initarg :dispatch-method)))
+
 (defgeneric do-new-connection (listening-socket tls dispatch-method &key)
   (:documentation
    "This method is implemented for the separate connection types. It waits on
@@ -71,8 +75,12 @@ using DISPATCH-METHOD.
 
 See @IMPLEMENTATIONS for available DISPATCH-METHOD.
 
-TLS is either NIL or :TLS. Note that when using HTTP/2 without TLS, most clients have to be instructed to
-use tls - e.g., --http2-prior-knowledge for curl."))
+TLS is either NIL or :TLS. Note that when using HTTP/2 without TLS, most clients
+have to be instructed to use tls - e.g., --http2-prior-knowledge for curl.
+
+Raise UNSUPPORTED-SERVER-SETUP if there is no relevant method.")
+  (:method (listening-socket tls dispatch-method &key)
+    (error 'unsupported-server-setup :tls tls :dispatch-method dispatch-method)))
 
 (defun callback-on-server (fn &key (thread-name "Test client for a server"))
   "Return a function that takes one parameter, URL, as a parameter and calls FN on
