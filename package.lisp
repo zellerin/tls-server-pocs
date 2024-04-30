@@ -65,7 +65,8 @@ So this repository implements:
   (tls-server/async::@async  section)
   (tls-server/async/tls::@async-server section)
   (tls-server/utils::@mgl-extensions section)
-  (@packages section))
+  (@packages section)
+  (@experiments section))
 
 (defsection @overview
     (:title "Overview")
@@ -127,3 +128,7 @@ a [better process](https://doc.zellerin.cz/Integrate%20test%20framework.html)
   "If you have adw-charting library installed (surprisingly presently also not in quicklisp), you can then generate some graphs from the data using [./clip/report.lisp]"
   "Or you can just check [./images] that reflect the state at some point of time on some
   particular machine.")
+
+(defsection @experiments
+    (:title "Experiments")
+  (clips section))
