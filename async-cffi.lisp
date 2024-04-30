@@ -9,10 +9,6 @@
 (eval-when (:compile-toplevel :load-toplevel)
   (declaim (optimize sb-cover:store-coverage-data debug safety)))
 
-(defun log-data-move (client from to requested moved)
-  (format t "~6,1f ~23a -- ~4a/~4a --> ~a~%" (timestamp client)
-          (or from "") moved requested (or to "")))
-
 ;;;;
 
 (define-foreign-library openssl (:unix "libssl.so"))
@@ -56,12 +52,15 @@
 (defcfun "fcntl" :int (fd :int) (cmd :int) (value :int))
 (defcfun "accept" :int (fd :int) (addr :pointer) (addrlen :int))
 (defcfun "setsockopt" :int (fd :int) (level :int) (optname :int) (optval :pointer) (optlen :int))
+
 (defun strerror (errnum)
+  "Lisp string for particular error. See man strerror(3)."
   (let ((str (make-array 256 :element-type 'character)))
     (with-pointer-to-vector-data (buffer str)
       (foreign-string-to-lisp (strerror-r% errnum buffer 256)))))
 
 (defun errno ()
+  "See man errno(3). "
   (mem-ref (errno%) :int))
 
 
@@ -100,10 +99,8 @@ DO-SOCK-WRITE called from PROCESS-CLIENT-FD on the callback."
 
 (defvar *encrypt-buf-size* 256
   "Initial size of the vector holding data to encrypt.")
-(defvar *max-read-chunks* 10
-  "Read up to this number of chunks before encrypting the output.")
 
-(defvar *default-buffer-size* 1400) ; close to socket size
+(defvar *default-buffer-size* 1500) ; close to socket size
 
 (defstruct (client  (:constructor make-client%)
             (:print-object
@@ -133,6 +130,9 @@ DO-SOCK-WRITE called from PROCESS-CLIENT-FD on the callback."
   (start-time (get-internal-real-time) :type fixnum))
 
 (defun use-pem-for (context fn path error)
+  "Apply FN on file on CONTEXT, PATH and SSL-FILETYPE-PEM.
+
+FN is expected to be one of SSL-CTX-use-XXX-file."
   (setf path (merge-pathnames path))
   (let ((full-path (probe-file (merge-pathnames path))))
     (unless full-path
@@ -153,7 +153,7 @@ however, it used directly cffi and sets some parameters in a different way."
           (asdf:component-pathname (asdf:find-system "tls-server"))))
     (when (null-pointer-p context)
       (error "Could not create context"))
-    (use-pem-for context #'ssl-ctx-use-certificate-file #P"certs/server.crt"
+    (use-pem-for context #'ssl-ctx-use-certificate-file #P"certs/server.pem"
                  "failed to load server certificate")
     (use-pem-for context #'ssl-ctx-use-privatekey-file #P"certs/server.key"
                  "failed to load server private key")
@@ -165,6 +165,7 @@ however, it used directly cffi and sets some parameters in a different way."
     context))
 
 (defmacro with-ssl-context ((ctx) &body body)
+  "Run body with SSL context created by MAKE-SSL-CONTEXT in CTX."
   (check-type ctx symbol)
   `(let ((,ctx (make-ssl-context)))
      (unwind-protect
@@ -175,27 +176,22 @@ however, it used directly cffi and sets some parameters in a different way."
 (deftype reader () '(function (t t fixnum) fixnum))
 (deftype writer () '(function (t t t fixnum) fixnum))
 
+(defvar *collect-for-write* t
+  "Should data for writing to TLS be merged together?
 
-(defvar *logger* #'log-data-move)
-
-(defun timestamp (client)
-  (round (* 1000.0 (- (get-internal-real-time) (client-start-time client)))
-         internal-time-units-per-second))
-
-(defvar *collect-for-write* nil)
+T should be more efficient... if it worked.")
 
 (defmacro define-reader (name source args &body body &aux declaration)
   (when (eq (caar body) 'declare)
     (setq declaration (pop body)))
   (destructuring-bind (client vector size) args
+    (declare (ignore client))
     `(progn
        (defun ,name ,args
          ,(format nil "Move up to ~a octets from ~a to the ~a.~2%Return 0 when no data are
 available. Raise an error on error." size source vector)
          ,declaration
-         (let ((res ,@body))
-           (funcall *logger* ,client ',source nil res ,size)
-           res))
+         ,@body)
        (setf (get ',name 'source) ',source))))
 
 (defmacro define-writer (name destination args &body body &aux declaration)
@@ -203,7 +199,7 @@ available. Raise an error on error." size source vector)
                  (format nil "WRITE-TO-~a" (symbol-name destination)))
     (warn "Writer name mismatch: ~a should be write-to-~a" name destination))
   (destructuring-bind (client vector from to) args
-    (declare (ignore from to))
+    (declare (ignore client from to))
     (when (eq (caar body) 'declare)
       (setq declaration (pop body)))
     `(progn
@@ -211,9 +207,7 @@ available. Raise an error on error." size source vector)
          ,(format nil "Move octets from ~a to the ~a.~2%Return 0 when no data are
 available. Raise an error on error." vector destination)
          ,declaration
-         (let ((res (progn ,@body)))
-           (funcall *logger* ,client nil ',destination res (- to from))
-           res))
+         (progn ,@body))
        (setf (get ',name 'destination) ',destination))))
 
 (define-reader read-from-peer peer-in (client vec vec-size)
@@ -259,11 +253,15 @@ Assumes writes cannot fail."
            (writer out-fn))
   (let ((vec (make-array *default-buffer-size* :element-type '(unsigned-byte 8))))
     (declare (dynamic-extent vec))
-    (loop for n fixnum = (funcall in-fn client vec *default-buffer-size*)
+    (loop
+      for read = nil then t
+      for n fixnum = (funcall in-fn client vec *default-buffer-size*)
+
           while (plusp n)
           ;; assumption: never fail
           do
-             (assert (= n (funcall out-fn client vec 0 n))))))
+             (assert (= n (funcall out-fn client vec 0 n)))
+          finally (return read))))
 
 (defun pull-once-push-bytes (client in-fn out-fn)
   "Read data using IN-FN and write them out using OUT-FN.
@@ -283,7 +281,13 @@ Assumes writes cannot fail."
     (assert (= n (funcall out-fn client vec 0 n)))))
 
 (defun move-encrypted-bytes (client)
-  "Move data encrypted by OpenSSL to the output socket queue."
+  "Move data encrypted by OpenSSL to the output socket queue, and then to the
+socket.
+
+This should be called in a way friendly to Nagle algorithm. My understaning is
+this is either when we pipeline a lot of data, or when we send out somethinf
+that expects a response."
+
   (pull-push-bytes client #'read-encrypted-from-openssl #'queue-encrypted-bytes)
   (write-data-to-socket client))
 
@@ -322,11 +326,9 @@ Repeat on partial write."
               0)))))
 
 (defun encrypt-data-internal (client data)
-  "Move octets from DATA to the ssl and further process them there."
+  "Move octets from DATA to the ssl and then to write buffer (w/o flush)."
   (push-bytes client
-              (lambda (client written)
-                (declare (ignore written))
-                (move-encrypted-bytes client))
+              (constantly nil)
               (lambda (client vector from to) (encrypt-some client vector from to))
               data 0 (client-encrypt-buf-size client)))
 
@@ -354,8 +356,7 @@ Raise error otherwise."
          ;; may be needed for pull phase
          (when (zerop (bio-test-flags wbio bio-flags-should-retry))
            (error "Retry flag should be set."))
-         (move-encrypted-bytes client)
-         )
+         #+nil(move-encrypted-bytes client))
         ((= err-code ssl-error-none) nil)
         ((= err-code ssl-error-zero-return)
          ;; Peer closed TLS connection
@@ -400,16 +401,17 @@ SSL_accept may want to read or write something. Writing is handled by DO-IO-IF-W
     (replace new old)
     new))
 
-(defun send-unencrypted-bytes (client new-data)
+(defun send-unencrypted-bytes (client new-data comment)
   "Collect new data to be encrypted and sent to client.
 
 Data are just concatenated to the ENCRYPT-BUF. Later, they would be encrypted
 and passed."
-  (funcall *logger* client 'application 'ssl-out (length new-data) (length new-data))
+  (declare (ignore comment))
   (let ((old-fp (client-encrypt-buf-size client)))
     (unless *collect-for-write*
       (when (zerop old-fp)
-        ;;  happy path: output is not blocking and no buffer
+        ;; happy path: output is not blocking and no buffer
+        ;; would interract badly with Nagle
         (encrypt-some client
                       new-data 0 (length new-data))
         (move-encrypted-bytes client)
@@ -479,7 +481,7 @@ handle the data."
   "Read data from client socket. If something is read (and it should, as this is
 called when there should be a data), it is passed to the tls buffer and
 decrypted."
-  (pull-once-push-bytes client #'read-from-peer
+  (pull-push-bytes client #'read-from-peer
                    #'decrypt-socket-octets))
 
 (defun concatenate* (vectors)
@@ -511,7 +513,7 @@ decrypted."
 (defun write-data-to-socket (client)
   "Write buffered encrypted data to the client socket. Update the write buffer to
 keep what did not fit."
-  (let ((concated (concatenate* (client-write-buf client))))
+  (let ((concated (concatenate* (client-write-buf client)))) ;;DEBUG
     (let ((written
             (push-bytes client (constantly nil)
                          #'send-to-peer
@@ -528,12 +530,13 @@ keep what did not fit."
 
 Read if you can, write if you can, announce DONE when done."
   (with-foreign-slots ((fd events revents) fd-ptr (:struct pollfd))
-    (if (plusp (logand c-pollin revents))
-        (process-data-on-socket client))
-    (if (plusp (logand c-pollout revents))
-        (write-data-to-socket client))
-    (if (plusp (logand revents  (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
-        (signal 'done))))
+    (when (plusp (logand c-pollin revents))
+      (process-data-on-socket client)
+      (move-encrypted-bytes client))
+    (when (plusp (logand c-pollout revents))
+      (write-data-to-socket client))
+    (when (plusp (logand revents  (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
+      (signal 'done))))
 
 (defvar *fdset-size* 10
   "Size of the fdset - that, is, maximum number of concurrent clients.")
@@ -548,7 +551,7 @@ Read if you can, write if you can, announce DONE when done."
                                :ssl (ssl-new ctx)
                                :io-on-read #'process-client-hello
                                :octets-needed +client-preface-length+)))
-    (ssl-set-accept-state (client-ssl client))
+    (ssl-set-accept-state (client-ssl client)) ; no return value
     (ssl-set-bio (client-ssl client) (client-rbio client) (client-wbio client))
     client))
 
@@ -592,6 +595,9 @@ Read if you can, write if you can, announce DONE when done."
                 (logior c-pollerr c-pollhup c-pollnval c-pollin)
                 0))
 
+(defvar *nagle* t
+  "If nil, disable Nagle algorithm (= enable nodelay)")
+
 (defvar *clients* nil
   "List of clients processed.")
 
@@ -605,12 +611,13 @@ Read if you can, write if you can, announce DONE when done."
           (unless (zerop (fcntl socket f-setfl
                                 (logior o-nonblock (fcntl socket f-getfl 0))))
             (error "Could not set O_NONBLOCK on the client"))
-          (unless (zerop
-                   (with-foreign-object (flag :int)
-                     (setf (mem-ref flag :int) 1)
-                     (setsockopt socket ipproto-tcp tcp-nodelay
-                                 flag (foreign-type-size :int))))
-            (error "Could not set O_NODELAY on the client"))
+          (unless *nagle*
+            (unless (zerop
+                     (with-foreign-object (flag :int)
+                       (setf (mem-ref flag :int) 1)
+                       (setsockopt socket ipproto-tcp tcp-nodelay
+                                   flag (foreign-type-size :int))))
+              (error "Could not set O_NODELAY on the client")))
           (add-socket-to-fdset fdset socket client)
           ;; maybe TODO: if no fdset slot available, stop reading listening socket
           (push client *clients*)))
@@ -655,7 +662,7 @@ Read if you can, write if you can, announce DONE when done."
             (close-client-connection fdset client)))))))
 
 (defmethod do-new-connection (socket (tls (eql :tls)) (dispatch-method (eql :async-custom))
-                              &key verbose)
+                              &key ((:nagle *nagle*) *nagle*))
   "Handle new connections by adding pollfd to and then polling.
 
 When poll indicates available data, process them with openssl using BIO. Data to
@@ -664,8 +671,7 @@ them).
 
 This in the end does not use usocket, async nor cl+ssl - it is a direct rewrite
 from C code."
-  (let ((*logger* (if verbose #'log-data-move (constantly nil))))
-    (serve-tls socket))
+  (serve-tls socket)
   ;; there is an outer loop in create-server that we want to skip
   (invoke-restart 'kill-server))
 
@@ -685,12 +691,14 @@ Raise error if only part of data is available. FIXME: process that anyway"
         ((not (plusp read)) nil)          ; just return and try again
         ((/= read octets)
          (error "Read ~d octets. This is not enough octets, why?~%~s~%" read (subseq vec 0 read)))
-        (t (funcall fn client vec) t)))))
+        (t (funcall fn client vec)
+           t ; read more data
+           )))))
 
 (defun process-client-hello (client vec)
   (cond ((equalp vec +client-preface-start+)
-         (send-unencrypted-bytes client tls-server/mini-http2::*settings-frame*)
-         (send-unencrypted-bytes client tls-server/mini-http2::*ack-frame*)
+         (send-unencrypted-bytes client tls-server/mini-http2::*settings-frame* 'settings)
+         (send-unencrypted-bytes client tls-server/mini-http2::*ack-frame* 'ack-settings)
          (setf (client-io-on-read client) #'process-header
                (client-octets-needed client) 9)
          (move-encrypted-bytes client))
@@ -712,10 +720,12 @@ Raise error if only part of data is available. FIXME: process that anyway"
     (let ((id-to-process (get-stream-id-if-ends header)))
       (when id-to-process
         (send-unencrypted-bytes client
-                                (buffer-with-changed-stream *header-frame* id-to-process))
+                                (buffer-with-changed-stream *header-frame* id-to-process)
+                                'response-headers)
         (send-unencrypted-bytes client
-                                (buffer-with-changed-stream *data-frame* id-to-process))
-        (move-encrypted-bytes client)))
+                                (buffer-with-changed-stream *data-frame* id-to-process)
+                                'response-payload)
+#+nil        (write-data-to-socket client)))
     (ignore-bytes client frame-size)))
 
 (defun really-ignore-bytes (client vec count)
@@ -727,7 +737,8 @@ Raise error if only part of data is available. FIXME: process that anyway"
 (defun really-ignore (client vec from to)
   "Ignore COUNT bytes.
 
-It means, account for COUNT bytes to ignore in OCTETS-NEEDED slot and if done, process to read the next header."
+It means, account for COUNT bytes to ignore in OCTETS-NEEDED slot and if done,
+process to read the next header."
   (declare (ignorable client vec))
 
   (when (zerop (incf (client-octets-needed client) (- to from)))
@@ -740,7 +751,7 @@ It means, account for COUNT bytes to ignore in OCTETS-NEEDED slot and if done, p
   (pull-push-bytes client
                    #'really-ignore-bytes
                    #'really-ignore)
-  nil)
+  (on-complete-ssl-data client))
 
 (defun ignore-bytes (client count)
   (if (zerop count)
