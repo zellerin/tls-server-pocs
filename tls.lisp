@@ -85,7 +85,7 @@ we should also limit allowed ciphers, but we do not."
      context
      (cffi:get-callback 'select-h2-callback))
     (let ((topdir (asdf:component-pathname (asdf:find-system "tls-server"))))
-      (ssl-ctx-use-certificate-chain-file context (namestring (merge-pathnames "certs/server.crt" topdir)))
+      (ssl-ctx-use-certificate-chain-file context (namestring (merge-pathnames "certs/server.pem" topdir)))
       (ssl-ctx-use-private-key-file context (namestring (merge-pathnames "certs/server.key" topdir)) cl+ssl::+ssl-filetype-pem+))
     context))
 
@@ -104,6 +104,6 @@ This is a simple wrapper over CL+SSL."
              (cl+ssl:make-ssl-server-stream
               (usocket:socket-stream raw-stream)
               :certificate
-              (namestring (merge-pathnames "certs/server.crt" topdir))
+              (namestring (merge-pathnames "certs/server.pem" topdir))
               :key (namestring (merge-pathnames "certs/server.key" topdir)))))
       tls-stream)))
