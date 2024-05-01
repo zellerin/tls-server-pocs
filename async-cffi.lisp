@@ -232,8 +232,10 @@ decrypted."
       (pull-push-bytes client #'read-from-peer
                        #'decrypt-socket-octets)
     (add-state client 'CAN-READ-SSL)
-#+nil    (when (if-state client 'bio-needs-read))
-    (add-state client 'CAN-READ-BIO))
+    (when (if-state client 'bio-needs-read)
+      (add-state client 'CAN-READ-BIO)
+      (remove-state client
+                    'BIO-NEEDS-READ)))
   (remove-state client 'CAN-READ-PORT))
 
 ;;;; Read SSL
@@ -520,6 +522,7 @@ Raise error otherwise."
         ((= err-code ssl-error-want-read)
          ;; This is relevant for accept call and handled in loop
          ;; may be needed for pull phase
+         (add-state client 'bio-needs-read)
          (when (zerop (bio-test-flags wbio bio-flags-should-retry))
            (error "Retry flag should be set."))
          #+nil(move-encrypted-bytes client))
@@ -548,7 +551,9 @@ Raise error otherwise."
 (defun maybe-init-ssl (client)
   "If SSL is not initialized yet, initialize it.
 
-SSL_accept may want to read or write something. Writing is handled by DO-IO-IF-WANTED, reading is handled by returning T so that caller knows to retry."
+SSL_accept may want to read or write something. Writing is handled by
+DO-IO-IF-WANTED, reading is handled by returning T so that caller knows to
+retry."
   (when (zerop (ssl-is-init-finished (client-ssl client)))
     (do-io-if-wanted client (ssl-accept (client-ssl client)))
     t))
@@ -601,12 +606,11 @@ SSL_accept may want to read or write something. Writing is handled by DO-IO-IF-W
 
 Read if you can, write if you can, announce DONE when done."
   (with-foreign-slots ((fd events revents) fd-ptr (:struct pollfd))
-    (when (plusp (logand c-pollin revents))
-      (add-state client 'can-read-port))
-    (when (plusp (logand c-pollout revents))
-      (add-state client 'can-write))
-    (when (plusp (logand revents  (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
-      (signal 'done))
+    (when (plusp (logand c-pollin revents)) (add-state client 'can-read-port))
+    (when (plusp (logand c-pollout revents)) (add-state client 'can-write))
+    (when (plusp (print (logand revents (logior c-POLLERR  c-POLLHUP  c-POLLNVAL))))
+      (break "Poll error for ~a: ~d" client (logand revents (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
+      (unless (if-state client 'can-read-port) (signal 'done)))
     (do-available-actions client)))
 
 (defvar *fdset-size* 10
@@ -656,7 +660,8 @@ Read if you can, write if you can, announce DONE when done."
                          fd-ptr
                          (:struct pollfd))
       (setf events
-            (if (client-write-buf client)
+            (if (and (if-state client 'has-data-to-write)
+                     (not (if-state client 'can-write)))
                 (logior events c-pollout)
                 (logand events (logxor -1 c-pollout)))))))
 
