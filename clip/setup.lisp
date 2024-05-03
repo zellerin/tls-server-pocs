@@ -6,12 +6,10 @@
 
 (in-package #:tls-server/measure)
 
+
 (defsection tls-server::clips
     (:title "Clips")
-  (data-moves clip-user::clip)
-  (peer-in-out clip-user::clip)
-  (curl clip-user::simulator)
-  (curl clip-user::experiment))
+  (actions clip/doc::clip))
 
 (defvar *last-real-time*)
 
@@ -119,11 +117,19 @@
   (values from to res))
 
 (defclip actions (client res)
+  "Collect client state and action (data movement) selected for execution into a separate clasp file, actions.clasp."
   (
    :trigger-event (tls-server/async/tls::select-next-action :after)
-   :components (reltime action state)
+   :components (reltime state action ssl-pending encrypt-buff-size write-buf-len write-buf-chunks)
    :output-file "actions")
-  (values (relative-real-time) res (set-difference (tls-server/async/tls::client-state client) 'tls-server/async/tls::(CAN-WRITE CAN-WRITE-SSL BIO-NEEDS-READ SSL-INIT-NEEDED))))
+  (values (relative-real-time)
+          (tls-server/async/tls::states-to-string (tls-server/async/tls::client-state client))
+          res
+          (tls-server/async/tls::ssl-pending (tls-server/async/tls::client-ssl client))
+          (tls-server/async/tls::client-encrypt-buf-size client)
+          (reduce #'+ (tls-server/async/tls::client-write-buf client)
+                  :key #'length)
+          (length  (tls-server/async/tls::client-write-buf client))))
 
 (define-experiment curl-flow ()
   :simulator curl

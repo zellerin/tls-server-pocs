@@ -19,7 +19,7 @@
                                    (http2:make-transport-stream raw-stream nil nil))
                   (setq res
                         (equalp (map 'vector 'char-code tls-server/mini-http2::*result-text*)
-                                (http2::read-stream-content-into-byte-vector response-stream))))
+                                (alexandria:read-stream-content-into-byte-vector response-stream))))
              (invoke-restart 'kill-client))))))
     res))
 

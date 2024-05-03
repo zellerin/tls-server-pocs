@@ -55,6 +55,11 @@ So this repository implements:
 - very simplified (and indeed incorrect in more than few ways) server side of
   HTTP/2 protocol, and based of that
 - several versions of TCP server that accept and handle the request."
+
+"Presently, the most advanced is the async version that uses CFFI
+![](images/five-clients.png)
+![](images/single-client.png)
+"
   (tls-server::@server-actions section)
   (@implementations section)
   (tls-server/utils::@octets section)
@@ -105,19 +110,10 @@ details of the implementations."
 (defsection @todos
     (:title "Bugs and considered improvements")
   "Test in another implementation"
-  "Improve backpressure"
   "See TODO: and FIXME: in the code"
-  "Locate and explore performance issues - see [separate file](./clip/bottlenecks.org):
 
-- failures of threaded version,
-- performance regression for async-custom for larger pipeline,
-- non-performance of cl-async::tcp-ssl-server"
   "Try to fit the observer performance to some formula,"
   "Do some measurements for real clients and specific cases"
-  "Add test cases and name existing ones better. Maybe there is a room for
-a [better process](https://doc.zellerin.cz/Integrate%20test%20framework.html)
-
- ![](images/fiasco.png)"
   "Try Quic/HTTP3")
 
 (defsection @measurements
