@@ -4,7 +4,7 @@
 (use-foreign-library openssl)
 
 (defcfun "BIO_new" :pointer (bio-method :pointer))
-(defcfun "BIO_read" :int (bio-method :pointer) (data :pointer) (dlen :int))
+(defcfun ("BIO_read" bio-read%) :int (bio-method :pointer) (data :pointer) (dlen :int))
 (defcfun "BIO_s_mem" :pointer)
 (defcfun "BIO_test_flags" :int (bio :pointer) (what :int))
 (defcfun "BIO_write" :int (bio-method :pointer) (data :pointer) (dlen :int))
@@ -25,16 +25,34 @@
 (defcfun "SSL_free" :int (ssl :pointer))
 (defcfun "SSL_is_init_finished" :int (ssl :pointer))
 (defcfun "SSL_new" :pointer (bio-method :pointer))
-(defcfun "SSL_read" :int (ssl :pointer) (buffer :pointer) (bufsize :int))
+(defcfun ("SSL_read" ssl-read%) :int (ssl :pointer) (buffer :pointer) (bufsize :int))
 (defcfun "SSL_set_accept_state" :pointer (ssl :pointer))
 (defcfun "SSL_set_bio" :void (ssl :pointer) (rbio :pointer) (wbio :pointer))
 (defcfun "SSL_write" :int (ssl :pointer) (buffer :pointer) (bufsize :int))
 (defcfun "TLS_method" :pointer)
 
+(defcfun ("__errno_location" errno%) :pointer)
+(defcfun ("strerror_r" strerror-r%) :pointer (errnum :int) (buffer :pointer) (buflen :int))
+
 (defcfun "poll" :int (fdset :pointer) (rb :int) (timeout :int))
 (defcfun ("close" close-fd) :int (fd :int))
 (defcfun ("read" read-2) :int (fd :int) (buf :pointer) (size :int))
 (defcfun ("write" write-2) :int (fd :int) (buf :pointer) (size :int))
+(defcfun "fcntl" :int (fd :int) (cmd :int) (value :int))
+(defcfun "accept" :int (fd :int) (addr :pointer) (addrlen :int))
+(defcfun "setsockopt" :int (fd :int) (level :int) (optname :int) (optval :pointer) (optlen :int))
+
+(defun strerror (errnum)
+  "Lisp string for particular error. See man strerror(3)."
+  (let ((str (make-array 256 :element-type 'character)))
+    (with-pointer-to-vector-data (buffer str)
+      (foreign-string-to-lisp (strerror-r% errnum buffer 256)))))
+
+(defun errno ()
+  "See man errno(3). "
+  (mem-ref (errno%) :int))
+
+
 
 (mgl-pax:defsection  @async-server
     (:title "Asynchronous TLS server")
@@ -68,7 +86,16 @@ DO-SOCK-WRITE called from PROCESS-CLIENT-FD on the callback."
   (encrypt-data function)
   (write-data-to-socket function))
 
-(defstruct client
+(defvar *encrypt-buf-size* 256
+  "Initial size of the vector holding data to encrypt.")
+
+(defvar *default-buffer-size* 1500) ; close to socket size
+
+(defstruct (client  (:constructor make-client%)
+            (:print-object
+                    (lambda (object out)
+                      (format out "#<client fd ~d, ~d octets to ~a>" (client-fd object)
+                              (client-octets-needed object) (client-io-on-read object)))))
   "Data of one client connection. This includes:
 
 - File desriptor (FD),
@@ -78,9 +105,296 @@ DO-SOCK-WRITE called from PROCESS-CLIENT-FD on the callback."
 - Encrypted octets to send to the file descriptor (ENCRYPT-BUF),
 - Callback function when read data are available (IO-ON-READ).
 - OCTETS-NEEDED number of octets required by IO-ON-READ, if FRAGMENT-OK this is an upper limit."
-  fd ssl rbio wbio write-buf encrypt-buf io-on-read fdset-idx octets-needed fragment-ok )
+  (fd -1 :type fixnum :read-only t)
+  (ssl (null-pointer) :type cffi:foreign-pointer :read-only nil) ; mostly RO, but invalidated afterwards
+  (rbio (null-pointer) :type cffi:foreign-pointer :read-only t)
+  (wbio (null-pointer) :type cffi:foreign-pointer :read-only t)
+  (write-buf nil :type (or null cons))
+  (encrypt-buf (make-array *encrypt-buf-size* :element-type '(unsigned-byte 8))
+   :type (simple-array (unsigned-byte 8)))
+  (io-on-read #'process-client-hello :type compiled-function)
+  (fdset-idx 0 :type fixnum :read-only nil) ; could be RO, but...
+  (octets-needed +client-preface-length+ :type fixnum)
+  (encrypt-buf-size 0 :type fixnum)
+  (start-time (get-internal-real-time) :type fixnum)
+  (state (list 'CAN-WRITE 'CAN-WRITE-SSL 'bio-needs-read 'ssl-init-needed))
+  ;; set of CAN-READ-PORT, CAN-READ-SSL, HAS-DATA-TO-ENCRYPT, CAN-WRITE-SSL,
+  ;; CAN-READ-BIO, HAS-DATA-TO-WRITE, CAN-WRITE
+  ;; BIO-NEEDS-READ SSL-INIT-NEEDED
+  )
 
+(defmacro define-reader (name source args &body body &aux declaration)
+  (when (eq (caar body) 'declare)
+    (setq declaration (pop body)))
+  (destructuring-bind (client vector size) args
+    (declare (ignore client))
+    `(progn
+       (defun ,name ,args
+         ,(format nil "Move up to ~a octets from ~a to the ~a.~2%Return 0 when no data are
+available. Raise an error on error." size source vector)
+         ,declaration
+         ,@body)
+       (setf (get ',name 'source) ',source))))
+
+(defmacro define-writer (name destination args &body body &aux declaration)
+  #+nil  (unless (equal (symbol-name name)
+                        (format nil "WRITE-TO-~a" (symbol-name destination)))
+           (warn "Writer name mismatch: ~a should be write-to-~a" name destination))
+  (destructuring-bind (client vector from to) args
+    (declare (ignore client from to))
+    (when (eq (caar body) 'declare)
+      (setq declaration (pop body)))
+    `(progn
+       (defun ,name ,args
+         ,(format nil "Move octets from ~a to the ~a.~2%Return 0 when no data are
+available. Raise an error on error." vector destination)
+         ,declaration
+         (progn ,@body))
+       (setf (get ',name 'destination) ',destination))))
+
+
+;;;; Client state
+(defun if-state (client state)
+  (member state (client-state client)))
+
+(defun add-state (client state)
+  (pushnew state (client-state client)))
+
+(defun remove-state (client state)
+  (setf (client-state client)
+        (remove state (client-state client))))
+
+;;;; Input port
+
+(defun setup-port (socket nagle)
+  "Set the TCP socket: nonblock and possibly nagle."
+  (unless (zerop (fcntl socket f-setfl
+                        (logior o-nonblock (fcntl socket f-getfl 0))))
+    (error "Could not set O_NONBLOCK on the client"))
+  (unless nagle
+    (unless (zerop
+             (with-foreign-object (flag :int)
+               (setf (mem-ref flag :int) 1)
+               (setsockopt socket ipproto-tcp tcp-nodelay
+                           flag (foreign-type-size :int))))
+      (error "Could not set O_NODELAY on the client"))))
+
+(define-reader read-from-peer peer-in (client vec vec-size)
+  (with-pointer-to-vector-data (buffer vec)
+    (let ((read (read-2 (client-fd client) buffer vec-size)))
+      (unless (= read vec-size)
+        (remove-state client 'CAN-READ-PORT))
+      (cond ((plusp read) read)
+            ((zerop read)  (signal 'done))
+            ((> -1 read) (error "This cannot happen #2"))
+            ((/= (errno) EAGAIN)
+             (warn "Read error (~d): ~d ~a" read (errno) (strerror (errno)))
+             (signal 'done))
+            (t 0)))))
+
+;;;; Read BIO (rbio)
+
+;;; This name is somewhat confusing - it is BIO for SSL reads, so it actually
+;;; gets written to.
+
+(define-writer write-octets-to-decrypt openssl-to-decrypt (client vector from to)
+  (with-pointer-to-vector-data (buffer vector)
+    (let ((written (bio-write (client-rbio client)
+                              (inc-pointer buffer from)
+                              (- to from))))
+      (unless (plusp written) (error "Bio-write failed"))
+      written)))
+
+(defun decrypt-socket-octets (client vector from to)
+  "Process SIZE bytes received from the peer that are in the BUFFER.
+
+Fed them into the SSL object to be unencrypted, and let the client callback
+handle the data."
+  (push-bytes client
+              (constantly nil)
+              #'write-octets-to-decrypt vector from to))
+
+(defun process-data-on-socket (client)
+  "Read data from client socket. If something is read (and it should, as this is
+called when there should be a data), it is passed to the tls buffer and
+decrypted."
+  (unless
+      (pull-once-push-bytes client #'read-from-peer
+                              #'decrypt-socket-octets)
+    (remove-state client 'can-read-port))
+  (add-state client 'CAN-READ-SSL)
+  (add-state client 'can-write-ssl)
+  (when (if-state client 'bio-needs-read)
+    (add-state client 'CAN-READ-BIO)
+    (remove-state client
+                  'BIO-NEEDS-READ)))
+
+;;;; Read SSL
+(define-reader ssl-read input-ssl (client vec size)
+  (let ((res
+          (with-pointer-to-vector-data (buffer vec)
+            (ssl-read% (client-ssl client) buffer size))))
+    (unless (plusp res)
+        (remove-state client 'can-read-ssl))
+    (do-io-if-wanted client res)
+    (max 0 res)))
+
+;;;; Run application
+(defun use-decrypted-octets (client)
+  "Consume decrypted octets as long as they go. Call application code in the
+callback; this should send data to the encrypt queue."
+  (error "No longer used, logic moved to select-next-action"))
+
+;;;; Encrypt queue
+(defun send-unencrypted-bytes (client new-data comment)
+  "Collect new data to be encrypted and sent to client.
+
+Data are just concatenated to the ENCRYPT-BUF. Later, they would be encrypted
+and passed."
+  (declare (ignore comment))
+  (let ((old-fp (client-encrypt-buf-size client)))
+    (setf (client-encrypt-buf-size client) (+ old-fp (length new-data)))
+    (loop
+      while (> (client-encrypt-buf-size client) (length (client-encrypt-buf client)))
+      do (setf (client-encrypt-buf client)
+               (double-buffer-size (client-encrypt-buf client))))
+    (replace (client-encrypt-buf client) new-data :start1 old-fp))
+  (add-state client 'has-data-to-encrypt))
+
+;;;; Write to SSL
+(define-writer encrypt-some output-ssl (client vector from to)
+  (with-pointer-to-vector-data (buffer vector)
+      (let* ((ssl (client-ssl client))
+             (res (ssl-write ssl (inc-pointer buffer from) (- to from))))
+        (cond
+          ((plusp res)
+           (add-state client 'can-read-bio)
+           res)
+          (t (let ((status (ssl-get-error ssl res)))
+               (when (not (member status
+                                  (list ssl-error-none ssl-error-want-write ssl-error-want-read)))
+                 (error "SSL write failed, status ~d" status))
+               (remove-state client 'can-write-ssl)
+               (add-state client 'has-data-to-encrypt)
+               0))))))
+
+(defun encrypt-data-internal (client data)
+  "Move octets from DATA to the ssl and then to write buffer (w/o flush)."
+  (push-bytes client
+              (lambda (client written)
+                  (setf (client-encrypt-buf-size client) 0)
+                  (remove-state client 'has-data-to-encrypt))
+              (lambda (client vector from to) (encrypt-some client vector from to))
+              data 0 (client-encrypt-buf-size client)))
+
+(defun encrypt-data (client)
+  "Encrypt data in client's ENCRYPT-BUF.
+
+Do nothing if no data to encrypt or SSL not yet initialized (and return zero).
+
+Otherwise, use a temporary vector to write data "
+  (unless (zerop (client-encrypt-buf-size client))
+    (encrypt-data-internal client
+                           (client-encrypt-buf client))))
+
+;;;; Write BIO
+(define-reader read-encrypted-from-openssl bio-out (client vec size)
+  (declare ((simple-array (unsigned-byte 8)) vec)
+           (fixnum size))
+  (with-pointer-to-vector-data (buffer vec)
+    (let ((res (bio-read% (client-wbio client) buffer size)))
+      (cond ((plusp res)
+             (add-state client 'has-data-to-write)
+             res)
+            ((zerop (bio-test-flags (client-wbio client) bio-flags-should-retry))
+             (error "Failed to read from bio, and cant retry"))
+            (t
+             (remove-state client 'can-read-bio)
+             0)))))
+
+(defun move-encrypted-bytes (client)
+  "Move data encrypted by OpenSSL to the output socket queue
+
+This should be called in a way friendly to Nagle algorithm. My understaning is
+this is either when we pipeline a lot of data, or when we send out somethinf
+that expects a response."
+  (pull-push-bytes client #'read-encrypted-from-openssl #'queue-encrypted-bytes)
+  (add-state client 'has-data-to-write))
+
+;;;; TCP write port
+(define-writer send-to-peer peer-out (client vector from to)
+  (with-pointer-to-vector-data (buffer vector)
+    (let ((res (write-2 (client-fd client)
+                        (inc-pointer buffer from)
+                        (- to from)))
+          (err (errno)))
+      (cond ((and (= res -1)
+                  (= err eagain))
+             (remove-state client 'can-write)
+             0)
+            ((= res -1)
+             ;; e.g., broken pipe
+             (invoke-restart 'kill-http-connection)
+             (error "Error during write: ~d (~a)" err (strerror err)))
+            ((plusp res) res)
+            (t (error "This cant happen (#1)"))))))
+
+(defun write-data-to-socket (client)
+  "Write buffered encrypted data to the client socket. Update the write buffer to
+keep what did not fit."
+  (let ((concated (concatenate* (client-write-buf client)))) ;;DEBUG
+    (let ((written
+            (push-bytes client (constantly nil)
+                         #'send-to-peer
+                         concated 0 (length concated))))
+      (setf (client-write-buf client)
+            (cond ((= written (length concated))
+                   (remove-state client 'has-data-to-write)
+                   nil)
+                  ((plusp written)
+                   (remove-state client 'can-write)
+                   (list (subseq concated written)))
+                  (t (error "Write failed")))))))
+
+(defun encrypt-and-send (client)
+  (encrypt-data client)
+  (move-encrypted-bytes client)
+  (write-data-to-socket client))
+
+;;;; Action selector
+(defun select-next-action (client)
+  "One of possible next actions consistent with then the state of the client or nil.
+
+This is factored out so that it can be traced or similarly observed."
+  (cond
+    ((if-state client 'can-read-port) #'process-data-on-socket)
+    ((if-state client 'can-read-ssl)
+     (if (plusp (client-octets-needed client))
+         #'on-complete-ssl-data
+         (client-io-on-read client)))
+    ((and (if-state client 'has-data-to-encrypt)
+          (if-state client 'can-write-ssl))
+     #'encrypt-data)
+    ((if-state client 'can-read-bio) #'move-encrypted-bytes)
+    ((and (if-state client 'has-data-to-write)
+          (if-state client 'can-write))
+     #'write-data-to-socket)
+    ((and (if-state client 'ssl-init-needed)
+          (not (if-state client 'bio-needs-read)))
+     #'maybe-init-ssl)
+    (t nil)))
+
+(defun do-available-actions (client)
+  "Run available actions till there is none."
+  (loop
+    for action = (select-next-action client)
+    while action do (funcall action client)))
+
+
 (defun use-pem-for (context fn path error)
+  "Apply FN on file on CONTEXT, PATH and SSL-FILETYPE-PEM.
+
+FN is expected to be one of SSL-CTX-use-XXX-file."
   (setf path (merge-pathnames path))
   (let ((full-path (probe-file (merge-pathnames path))))
     (unless full-path
@@ -101,7 +415,7 @@ however, it used directly cffi and sets some parameters in a different way."
           (asdf:component-pathname (asdf:find-system "tls-server"))))
     (when (null-pointer-p context)
       (error "Could not create context"))
-    (use-pem-for context #'ssl-ctx-use-certificate-file #P"certs/server.crt"
+    (use-pem-for context #'ssl-ctx-use-certificate-file #P"certs/server.pem"
                  "failed to load server certificate")
     (use-pem-for context #'ssl-ctx-use-privatekey-file #P"certs/server.key"
                  "failed to load server private key")
@@ -113,19 +427,81 @@ however, it used directly cffi and sets some parameters in a different way."
     context))
 
 (defmacro with-ssl-context ((ctx) &body body)
+  "Run body with SSL context created by MAKE-SSL-CONTEXT in CTX."
   (check-type ctx symbol)
   `(let ((,ctx (make-ssl-context)))
      (unwind-protect
           (progn ,@body)
        (ssl-ctx-free ,ctx))))
+
+;; Moving data around
+(deftype reader () '(function (t t fixnum) fixnum))
+(deftype writer () '(function (t t t fixnum) fixnum))
 
-(defun move-encrypted-bytes (wbio client buffer vec)
-  "Move data encrypted by OpenSSL to the output socket queue."
+(defun pull-push-bytes (client in-fn out-fn)
+  "Read data using IN-FN and write them out using OUT-FN.
+
+Pass CLIENT as the first argument to both of them. the other are vector to read
+or write and the size to read or write. Read function should return number of
+bytes read.
+
+Finish when the last read reads nothing.
+
+Assumes writes cannot fail."
   (declare (optimize speed (safety 1) (debug 0))
-           ((simple-array (unsigned-byte 8)) vec))
-  (loop for n fixnum = (bio-read wbio buffer *default-buffer-size*)
-        while (plusp n)
-        do (queue-encrypted-bytes client (subseq vec 0 n))))
+           (reader in-fn)
+           (writer out-fn))
+  (let ((vec (make-array *default-buffer-size* :element-type '(unsigned-byte 8))))
+    (declare (dynamic-extent vec))
+    (loop
+      for read = nil then t
+      for n fixnum = (funcall in-fn client vec *default-buffer-size*)
+
+          while (plusp n)
+          ;; assumption: never fail
+          do
+             (assert (= n (funcall out-fn client vec 0 n)))
+          finally (return read))))
+
+(defun pull-once-push-bytes (client in-fn out-fn)
+  "Read data using IN-FN and write them out using OUT-FN.
+
+Pass CLIENT as the first argument to both of them. the other are vector to read
+or write and the size to read or write. Read function should return number of
+bytes read.
+
+Finish when the last read reads nothing.
+
+Assumes writes cannot fail."
+  (declare (optimize speed (safety 1) (debug 0))
+           (reader in-fn)
+           (writer out-fn))
+  (let* ((vec (make-array *default-buffer-size* :element-type '(unsigned-byte 8)))
+         (n (funcall in-fn client vec *default-buffer-size*)))
+    (assert (= n (funcall out-fn client vec 0 n)))
+    (= (the fixnum *default-buffer-size*) n)))
+
+(defun push-bytes (client next-fn out-fn vector from to)
+  "Process octets in the VECTOR in the interval <FROM TO).
+
+Call OUT-FN on VECTOR, FROM TO. It returns number of processed octets (or 0 if
+none, or raises an error). If something is written, NEXT-FN is also called to do \"next stage\".
+
+Repeat on partial write."
+  (if (= from to)
+      from
+      (loop
+        for written = (funcall out-fn client vector from to)
+        do
+           (incf from written)
+           (cond
+             ((= from to)
+              (funcall next-fn client written)
+              (return from))
+             ((plusp written)
+              (funcall next-fn client written))
+             ((zerop written)
+              (return from))))))
 
 (defun do-io-if-wanted (client ret)
   "Check real error after a call to SSL_connect, SSL_accept,
@@ -134,109 +510,70 @@ SSL_write_ex or SSL_write.
 
 If the operation was successfully completed, do nothing.
 
-If it is a harmless one (want read or want write), send data to be sent.
+If it is a harmless one (want read or want write), try to process the data.
 
 Raise error otherwise."
   (let ((ssl (client-ssl client))
-        (wbio (client-wbio client)))
+        (wbio (client-rbio client)))
     (let ((err-code (ssl-get-error ssl ret)))
-      (case err-code
-        ((#.ssl-error-want-read #.ssl-error-want-write)
-         (let* ((vec (make-shareable-byte-vector *default-buffer-size*)))
-           (with-pointer-to-vector-data (buffer vec)
-             (declare (dynamic-extent buffer))
-             (move-encrypted-bytes wbio client buffer vec)
-             (when (zerop (bio-test-flags wbio bio-flags-should-retry))
-               (error "Should retry should be set.")))))
-        (#.ssl-error-none nil)
-        (#.ssl-error-ssl (process-ssl-errors))
-        (t (cerror "Ignore" "SSL error ~d during write attempt" err-code))))))
+      (cond
+        ;; after ssl read
+        ((= err-code ssl-error-want-write)
+         (when (zerop (bio-test-flags wbio bio-flags-should-retry))
+           (error "Retry flag should be set.")))
+        ((= err-code ssl-error-want-read)
+         ;; This is relevant for accept call and handled in loop
+         ;; may be needed for pull phase
+         (add-state client 'bio-needs-read)
+         (when (zerop (bio-test-flags wbio bio-flags-should-retry))
+           (error "Retry flag should be set.")))
+        ((= err-code ssl-error-none) nil)
+        ((= err-code ssl-error-zero-return)
+         ;; Peer closed TLS connection
+         (add-state client 'peer-closed-connection))
+        ((= err-code ssl-error-ssl)
+         (process-ssl-errors))
+        ((= err-code ssl-error-syscall)
+         (warn "SSL syscall error ~d (~a) " (errno) (strerror (errno)))
+         (invoke-restart 'kill-http-connection))
+        (t (warn "SSL error ~d" err-code)
+           (invoke-restart 'kill-http-connection))))))
 
 (defun ssl-err-reason-error-string (code)
   (foreign-string-to-lisp (err-reason-error-string code)))
 
 (defun process-ssl-errors ()
-  (loop for err =  (err-get-error)
+  (loop for err = (err-get-error)
         until (zerop err)
         unless (position err #(#xa000412 )) ;bad certificate
           do
              (cerror "Ignore" 'ssl-error-condition :code err)))
 
 (defun maybe-init-ssl (client)
-  "If SSL is not initialized yet, initialize it"
-  (when (zerop (ssl-is-init-finished (client-ssl client)))
-    (do-io-if-wanted client (ssl-accept (client-ssl client)))))
+  "If SSL is not initialized yet, initialize it."
+  (if (zerop (ssl-is-init-finished (client-ssl client)))
+    (do-io-if-wanted client (ssl-accept (client-ssl client)))
+    (remove-state client 'ssl-init-needed)))
 
-(defun send-unencrypted-bytes (client new-data)
-  "Process new data to be encrypted and sent to client.
+(defun doubled-buffer (buffer)
+  "Return a larger buffer with same initial data as the provided one."
+  (let ((new (make-array (* 2 (length buffer))
+                         :element-type '(unsigned-byte 8))))
+    (replace new buffer)
+    new))
 
-Data are just concatenated to the ENCRYPT-BUF. Someone later,
-they would be encrypted and passed."
-  (setf (client-encrypt-buf client)
-        (concatenate '(vector (unsigned-byte 8))
-                     (client-encrypt-buf client)
-                     new-data)))
+(defun double-buffer-size (old)
+  "Analog of realloc."
+  (let ((new (make-array (* 2 (length old))
+                         :element-type '(unsigned-byte 8))))
+    (replace new old)
+    new))
 
-(defvar *unencrypted-sender* 'send-unencrypted-bytes-v1
-  "Default function to send unencrypted data.")
-
-(defun encrypt-data (client data)
-  "Encrypt data in client's ENCRYPT-BUF.
-
-Do nothing if no data to encrypt or SSL not yet initialized.
-
-Otherwise, use a temporary vector to write data "
-  (unless (or (null data)
-              (zerop (ssl-is-init-finished (client-ssl client))))
-    (let ((read-vector (make-shareable-byte-vector *default-buffer-size*)))
-      (with-pointer-to-vector-data (read-buffer read-vector)
-        (declare (dynamic-extent read-buffer))
-        (with-pointer-to-vector-data (buffer data)
-          (declare (dynamic-extent buffer))
-          (loop
-            with len = (length data)
-            and all-written = 0
-            and ssl = (client-ssl client)
-            for written = (ssl-write ssl buffer len)
-            for status = (ssl-get-error ssl written)
-            do
-               (cond
-                 ((= len written)
-                  (move-encrypted-bytes (client-wbio client)  client read-buffer read-vector)
-                  (return nil))
-                 ((plusp written)
-                  (incf all-written written)
-                  (setf buffer (inc-pointer buffer written))
-                  (decf len written)
-                  (move-encrypted-bytes (client-wbio client) read-buffer client read-vector))
-                 ((not (member status (list ssl-error-none ssl-error-want-write ssl-error-want-read)))
-                  (error "SSL write failed, status ~d" status))
-                 ((zerop written)
-                  (return (subseq data all-written))))))))))
-
-(defun queue-encrypted-bytes (client new-data)
+(define-writer queue-encrypted-bytes write-buffer (client new-data from to)
   (setf (client-write-buf client)
         (append (client-write-buf client)
-                (list new-data))))
-
-(defun decrypt-socket-octets (client buffer size)
-  "Process SIZE bytes received from the peer that are in the BUFFER.
-
-Fed them into the SSL object to be unencrypted, and let the client callback
-handle "
-  (loop for written = (bio-write (client-rbio client) buffer size)
-        when (minusp written) do (error "Bio-write failed")
-          do
-             (decf size written)
-             (setf buffer (inc-pointer buffer written))
-             (maybe-init-ssl client)
-             (loop while
-               (if (plusp (client-octets-needed client))
-                   (on-complete-ssl-data client)
-                   (funcall (client-io-on-read client) client)))
-             (do-io-if-wanted client written)
-        when (zerop size)
-          do (return)))
+                (list (subseq new-data from to))))
+  (- to from))
 
 (define-condition done (error)
   ()
@@ -251,16 +588,6 @@ handle "
     (format stream "~x: ~a" (get-code object)
             (ssl-err-reason-error-string (get-code object)))))
 
-(defvar *default-buffer-size* 64)
-
-(defun process-data-on-socket (client)
-  "Read data from client socket. If something is read (and it should, as this is called when there should be a data), it is passed to the "
-  (with-foreign-object (buffer :char *default-buffer-size*)
-    (let ((read (read-2 (client-fd client) buffer *default-buffer-size*)))
-      (if (plusp read)
-          (decrypt-socket-octets client buffer read)
-          (signal 'done)))))
-
 (defun concatenate* (vectors)
   (let* ((len (reduce #'+ vectors :key #'length))
          (res (make-array len :element-type '(unsigned-byte 8))))
@@ -271,31 +598,18 @@ handle "
              (incf i (length v))
           finally (return res))))
 
-(defun write-data-to-socket (client)
-  "Write buffered encrypted data to the client socket. Update the write buffer to
-keep what did not fit."
-  (let ((concated (concatenate* (client-write-buf client))))
-    (with-pointer-to-vector-data (buffer concated)
-      (let ((n (write-2 (client-fd client) buffer
-                        (length concated))))
-        (setf (client-write-buf client)
-              (cond ((= n (length concated))
-                     nil)
-                    ((plusp n)
-                     (list (subseq concated n)))
-                    (t (error "Write failed"))))))))
-
 (defun process-client-fd (fd-ptr client)
   "Process events available on FD-PTR with CLIENT.
 
 Read if you can, write if you can, announce DONE when done."
   (with-foreign-slots ((fd events revents) fd-ptr (:struct pollfd))
-    (if (plusp (logand c-pollin revents))
-        (process-data-on-socket client))
-    (if (plusp (logand c-pollout revents))
-        (write-data-to-socket client))
-    (if (plusp (logand revents  (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
-        (signal 'done))))
+    (when (plusp (logand c-pollin revents)) (add-state client 'can-read-port))
+    (when (plusp (logand c-pollout revents)) (add-state client 'can-write))
+    (do-available-actions client)
+    (when (plusp (logand revents (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
+      ;; this happens, e.g., with h2load -D (time based)
+      (warn "Poll error for ~a: ~d" client (logand revents (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
+      (signal 'done))))
 
 (defvar *fdset-size* 10
   "Size of the fdset - that, is, maximum number of concurrent clients.")
@@ -304,14 +618,15 @@ Read if you can, write if you can, announce DONE when done."
 
 (defun make-client-object (socket ctx s-mem)
   "Create new CLIENT object suitable for TLS server."
-  (let* ((client (make-client :fd socket
-                              :rbio (bio-new s-mem)
-                              :wbio (bio-new s-mem)
-                              :ssl (ssl-new ctx)
-                              :io-on-read #'process-client-hello
-                              :octets-needed +client-preface-length+)))
-    (ssl-set-accept-state (client-ssl client))
+  (let* ((client (make-client% :fd socket
+                               :rbio (bio-new s-mem)
+                               :wbio (bio-new s-mem)
+                               :ssl (ssl-new ctx)
+                               :io-on-read #'process-client-hello
+                               :octets-needed +client-preface-length+)))
+    (ssl-set-accept-state (client-ssl client)) ; no return value
     (ssl-set-bio (client-ssl client) (client-rbio client) (client-wbio client))
+    (send-unencrypted-bytes client tls-server/mini-http2::*settings-frame* 'settings)
     client))
 
 (defun set-fd-slot (fdset socket new-events idx)
@@ -335,14 +650,12 @@ Read if you can, write if you can, announce DONE when done."
 (defun handle-client-io (client fdset)
   (let ((fd-ptr (inc-pointer fdset (* (client-fdset-idx client) size-of-pollfd))))
     (process-client-fd fd-ptr client)
-    (when (client-encrypt-buf client)
-      (setf (client-encrypt-buf client)
-            (encrypt-data client (client-encrypt-buf client))))
     (with-foreign-slots ((events)
                          fd-ptr
                          (:struct pollfd))
       (setf events
-            (if (client-write-buf client)
+            (if (and (if-state client 'has-data-to-write)
+                     (not (if-state client 'can-write)))
                 (logior events c-pollout)
                 (logand events (logxor -1 c-pollout)))))))
 
@@ -352,6 +665,9 @@ Read if you can, write if you can, announce DONE when done."
                 (logior c-pollerr c-pollhup c-pollnval c-pollin)
                 0))
 
+(defvar *nagle* t
+  "If nil, disable Nagle algorithm (= enable nodelay)")
+
 (defvar *clients* nil
   "List of clients processed.")
 
@@ -359,11 +675,10 @@ Read if you can, write if you can, announce DONE when done."
   "Add new client: accept connection, create client and add it to pollfd and to *clients*."
   (with-foreign-slots ((revents) fdset (:struct pollfd))
     (if (plusp (logand c-pollin revents))
-        (let* ((socket (sb-bsd-sockets:socket-file-descriptor
-                        (usocket:socket
-                         (usocket:socket-accept listening-socket :element-type
-                                                '(unsigned-byte 8)))))
+        (let* ((socket (accept
+                        (sb-bsd-sockets::socket-file-descriptor (usocket:socket listening-socket)) (null-pointer) 0))
                (client (make-client-object socket ctx s-mem)))
+          (setup-port socket *nagle*)
           (add-socket-to-fdset fdset socket client)
           ;; maybe TODO: if no fdset slot available, stop reading listening socket
           (push client *clients*)))
@@ -371,10 +686,12 @@ Read if you can, write if you can, announce DONE when done."
         (error "Error on listening socket"))))
 
 (defun close-client-connection (fdset client)
-  (ssl-free (client-ssl client)) ; BIOs are closed automatically
+  (setf *clients* (remove client *clients*))
+  (unless (null-pointer-p (client-ssl client))
+    (ssl-free (client-ssl client)))     ; BIOs are closed automatically
+  (setf (client-ssl client) (null-pointer))
   (push (client-fdset-idx client) *empty-fdset-items*)
   (set-fd-slot fdset -1 0 (client-fdset-idx client))
-  (setf *clients* (remove client *clients*))
   (close-fd (client-fd client)))
 
 (defun process-client-sockets (fdset nread)
@@ -392,7 +709,9 @@ Read if you can, write if you can, announce DONE when done."
     (init-fdset fdset *fdset-size*)
     (with-ssl-context (ctx)
       (let* ((s-mem (bio-s-mem))
-             (*clients* nil)
+             ;; FIXME: if *clients* was bound, it cannot be easily observed from
+             ;; monitoring;
+             #+(or) (*clients* nil)
              (*empty-fdset-items* (alexandria:iota (1- *fdset-size*) :start 1)))
         (setup-new-connect-pollfd fdset listening-socket)
         (unwind-protect
@@ -403,7 +722,8 @@ Read if you can, write if you can, announce DONE when done."
           (dolist (client *clients*)
             (close-client-connection fdset client)))))))
 
-(defmethod do-new-connection (socket (tls (eql :tls)) (dispatch-method (eql :async-custom)))
+(defmethod do-new-connection (socket (tls (eql :tls)) (dispatch-method (eql :async-custom))
+                              &key ((:nagle *nagle*) *nagle*))
   "Handle new connections by adding pollfd to and then polling.
 
 When poll indicates available data, process them with openssl using BIO. Data to
@@ -420,92 +740,95 @@ from C code."
 
 ;;;; HTTP2 TLS async client
 (defun on-complete-ssl-data (client)
-  "Read exactly OCTETS octets from SSL to VEC.
+  "Read number of octets indicated in CLIENT into a vector and then apply client fn on it.
 
-Raise error if only part of data is available. FIXME: process that anyway"
-  (let ((vec (make-shareable-byte-vector +client-preface-length+))
-        (ssl (client-ssl client))
-        (fn (client-io-on-read client))
-        (octets (client-octets-needed client)))
-    (with-pointer-to-vector-data (buffer vec)
+ FIXME: process that anyway"
+  (let* ((octets (client-octets-needed client))
+         (vec (make-shareable-byte-vector octets))
+         (fn (client-io-on-read client)))
       ;; TODO: check first with SSL_pending?
-      (let ((read (ssl-read ssl buffer octets)))
-        (cond
-          ((not (plusp read)) nil)          ; just return and try again
-          ((/= read octets)
-           (error "Read ~d octets. This is not enough octets, why?~%~s~%" read (subseq vec 0 read)))
-          (t (funcall fn client vec) t))))))
+    (let ((read (ssl-read client vec octets)))
+      (cond
+        ((not (plusp read))
+         (do-io-if-wanted client read))
+        ((/= read octets)
+         (error "Read ~d octets. This is not enough octets, why?~%~s~%" read (subseq vec 0 read)))
+        (t (funcall fn client vec)
+           t ; read more data
+           )))))
 
 (defun process-client-hello (client vec)
   (cond ((equalp vec +client-preface-start+)
-         (send-unencrypted-bytes client tls-server/mini-http2::*settings-frame*)
-         (send-unencrypted-bytes client tls-server/mini-http2::*ack-frame*)
-         (setf (client-io-on-read client) #'process-header
-               (client-octets-needed client) 9))
+         (setf (client-io-on-read client) #'process-header (client-octets-needed client) 9)
+         (add-state client 'reply-wanted))
         (t
          (error 'client-preface-mismatch :received vec))))
+
+(defun print-goaway-frame (client frame)
+  (unless (every #'zerop  (subseq frame 4 8))
+    (format t "Error code: ~s, last strea ~s" (subseq frame 4 8)
+            (subseq frame 0 4))
+    (write-line (map 'string 'code-char frame) *standard-output* :start 8)
+    (setf (client-io-on-read client) #'process-header
+          (client-octets-needed client) 9)))
 
 (defun process-header (client header)
   (let* ((frame-size (get-frame-size header))
          (type (get-frame-type header)))
     (declare ((unsigned-byte 8) type)
-             (frame-size frame-size))
+#+nil             (frame-size frame-size))
+    #+nil      (format t "Header read: type ~d, expecting frame with ~d octets~%" type frame-size)
+
+    (when (and (= type 4)  ; settings
+               (zerop (logand 1 (get-frame-flags header)))) ; not ack
+      (send-unencrypted-bytes client tls-server/mini-http2::*ack-frame* 'ack-settings))
     (when (= type +goaway-frame-type+)
       ;; TODO: handle go-away frame
-      )
+      (write-line "Got goaway:")
+      (setf (client-io-on-read client) #'print-goaway-frame
+            (client-octets-needed client) frame-size)
+      (return-from process-header))
     (unless (>= 16384 frame-size)
       (error  "Too big header! go-away"))
     (let ((id-to-process (get-stream-id-if-ends header)))
       (when id-to-process
         (send-unencrypted-bytes client
-                                (buffer-with-changed-stream *header-frame* id-to-process))
+                                (buffer-with-changed-stream *header-frame* id-to-process)
+                                'response-headers)
         (send-unencrypted-bytes client
-                                (buffer-with-changed-stream *data-frame* id-to-process))))
+                                (buffer-with-changed-stream *data-frame* id-to-process)
+                                'response-payload)))
     (ignore-bytes client frame-size)))
+
+(defun really-ignore-bytes (client vec count)
+  (let ((size (- (client-octets-needed client))))
+    (if (plusp size)
+      (ssl-read client vec (min size count))
+      0)))
+
+(defun really-ignore (client vec from to)
+  "Ignore COUNT bytes.
+
+It means, account for COUNT bytes to ignore in OCTETS-NEEDED slot and if done,
+process to read the next header."
+  (declare (ignorable client vec))
+
+  (when (zerop (incf (client-octets-needed client) (- to from)))
+    (setf (client-io-on-read client) #'process-header
+          (client-octets-needed client) 9)
+    (on-complete-ssl-data client))
+  (- to from))
+
+(defun pull-from-ignore (client) ; name me
+  (pull-push-bytes client
+                   #'really-ignore-bytes
+                   #'really-ignore)
+#+nil  (on-complete-ssl-data client))
 
 (defun ignore-bytes (client count)
   (if (zerop count)
       (setf (client-octets-needed client) 9
             (client-io-on-read client) #'process-header)
-      (setf (client-octets-needed client) 0
-            (client-io-on-read client)
-            (lambda (client)
-              (let ((vec (make-shareable-byte-vector count)))
-                (with-pointer-to-vector-data (buffer vec)
-                  (let ((read (ssl-read (client-ssl client) buffer count)))
-                    (decf count read)
-                    (when (zerop count)
-                      (setf (client-io-on-read client) #'process-header
-                            (client-octets-needed client) 9)
-                      (on-complete-ssl-data client))))))))
+      (setf (client-octets-needed client) (- count)
+            (client-io-on-read client) #'pull-from-ignore))
   t)
-
-;;;; version with async
-(defmethod do-new-connection (socket (tls (eql :v3)) (dispatch-method (eql :async)))
-  "Handle new connections using cl-async event loop.
-
-Pros: This version can be run in one thread and process many clients.
-
-Cons: requires a specific C library, and the implementation as-is depends on
-SBCL internal function - we re-use the file descriptor of socket created by
-usocket package, as otherwise access to the port of server is complicated."
-  (let ((ctx (make-ssl-context))
-        (s-mem (bio-s-mem)))
-    (cl-async:start-event-loop
-     (lambda ()
-       (cl-async:tcp-server nil nil
-                            (lambda (socket bytes)
-                              (with-pointer-to-vector-data (p bytes)
-                                (decrypt-socket-octets (cl-async:socket-data socket)
-                                                       p
-                                                       (length bytes))
-                                (let* ((client (cl-async:socket-data socket))
-                                       (concated (concatenate* (client-write-buf client))))
-                                  (cl-async:write-socket-data  socket concated))))
-                            :connect-cb (lambda (socket)
-                                          (setf (cl-async:socket-data socket)
-                                                (make-client-object socket ctx s-mem)))
-                            :event-cb (lambda (err) (format t "--> ~s~%" err))
-                            :fd (sb-bsd-sockets:socket-file-descriptor
-                                 (usocket:socket socket))))))
-  (invoke-restart 'kill-server))

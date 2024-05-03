@@ -65,7 +65,8 @@ So this repository implements:
   (tls-server/async::@async  section)
   (tls-server/async/tls::@async-server section)
   (tls-server/utils::@mgl-extensions section)
-  (@packages section))
+  (@packages section)
+  (@experiments section))
 
 (defsection @overview
     (:title "Overview")
@@ -82,11 +83,12 @@ So this repository implements:
 
 All the server implementations can be started with CREATE-SERVER. New server
 types with same interface are defined by specializing DO-NEW-CONNECTION"
-  "See also (additional documentation)[https://docs.zellerin.cz/tls-server-poc] for
+  "See also [additional documentation](https://docs.zellerin.cz/tls-server-poc) for
 details of the implementations."
   (create-server function)
   (do-new-connection generic-function)
   (@implementations section)
+  (@measurements section)
   (@todos section))
 
 (defsection @implementations
@@ -96,7 +98,7 @@ details of the implementations."
   (do-new-connection (method nil (t t (eql :thread))))
   (do-new-connection (method nil (t t (eql :none/http2))))
   (do-new-connection (method nil (t (eql nil) (eql :async))))
-  (do-new-connection (method nil (t (eql t) (eql :async))))
+  (do-new-connection (method nil (t (eql :tls) (eql :async))))
 #+not-ready-yet  (do-new-connection (method nil (t (eql :nonblock) (eql :async))))
   (do-new-connection (method nil (t (eql :tls) (eql :async-custom)))))
 
@@ -105,10 +107,28 @@ details of the implementations."
   "Test in another implementation"
   "Improve backpressure"
   "See TODO: and FIXME: in the code"
-  "Add measurement points and tunables (probably using [clip](https://github.com/zellerin/clip-1.4/))"
+  "Locate and explore performance issues - see [separate file](./clip/bottlenecks.org):
+
+- failures of threaded version,
+- performance regression for async-custom for larger pipeline,
+- non-performance of cl-async::tcp-ssl-server"
+  "Try to fit the observer performance to some formula,"
   "Do some measurements for real clients and specific cases"
   "Add test cases and name existing ones better. Maybe there is a room for
 a [better process](https://doc.zellerin.cz/Integrate%20test%20framework.html)
 
  ![](images/fiasco.png)"
   "Try Quic/HTTP3")
+
+(defsection @measurements
+  (:title "Some metrics")
+  "Now it is possible to do some measurements; assuming you have clip library
+  installed (not in quicklisp), you can run scripts [./clip/measure.lisp] to obtain how fast some
+  combinations of number of clients, size of pipeline and implementation is."
+  "If you have adw-charting library installed (surprisingly presently also not in quicklisp), you can then generate some graphs from the data using [./clip/report.lisp]"
+  "Or you can just check [./images] that reflect the state at some point of time on some
+  particular machine.")
+
+(defsection @experiments
+    (:title "Experiments")
+  (clips section))

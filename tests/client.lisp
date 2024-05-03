@@ -53,8 +53,8 @@
 
 (deftest none/native ()
   "Run tests on single-client server."
-#+a  (http2-client-native-test nil :none)
-#+a  (http2-client-curl-test nil :none)
+  (http2-client-native-test nil :none)
+  (http2-client-curl-test nil :none)
   (http2-client-curl-test :tls :none))
 
 (deftest thread/native ()
@@ -70,5 +70,9 @@
 (deftest async/library ()
   "Run tests on a threading server."
   (http2-client-native-test nil :async)
-  (http2-client-curl-test nil :async)
   (http2-client-curl-test nil :async))
+
+(deftest async/library/tls ()
+  "Run tests on a threading server."
+  (http2-client-curl-test nil :async)
+  (http2-client-curl-test :tls :async))

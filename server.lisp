@@ -12,13 +12,16 @@ server types implement appropriate methods to ensure desired behaviour."
   (go-away restart)
   (callback-on-server function)
   (url-from-socket function)
+  (url-from-port function)
   ;; TODO: remove/fix
   (*buffer* variable))
 
 (defun create-server (port tls dispatch-method
+                      &rest keys
                       &key
                         (host "127.0.0.1")
-                        (announce-url-callback (constantly nil)))
+                        (announce-url-callback (constantly nil))
+                        &allow-other-keys)
   "Create a server on HOST and PORT that handles connections (possibly with TLS) using
 DISPATCH-METHOD.
 
@@ -36,8 +39,10 @@ DISPATCH-METHOD as parameters."
                                                       :reuse-address t
                                                       :element-type '(unsigned-byte 8))
         (funcall announce-url-callback (url-from-socket listening-socket host tls))
+        (remf keys :host)
+        (remf keys :announce-url-callback)
         (loop
-          (do-new-connection listening-socket tls dispatch-method)))
+          (apply 'do-new-connection listening-socket tls dispatch-method keys)))
     (kill-server (&optional value) :report "Kill server" value)))
 
 (defun url-from-socket (socket host tls)
@@ -49,7 +54,20 @@ This is to be used as callback fn on an open server for testing it."
                  :port (usocket:get-local-port socket)
                  :host host))
 
-(defgeneric do-new-connection (listening-socket tls dispatch-method)
+(defun url-from-port (port host tls)
+  "Return URL that combines HOST with the port of the SOCKET.
+
+This is to be used as callback fn on an open server for testing it."
+  (make-instance 'puri:uri
+                 :scheme (if tls :https :http)
+                 :port port
+                 :host host))
+
+(define-condition unsupported-server-setup (error)
+  ((tls             :accessor get-tls             :initarg :tls)
+   (dispatch-method :accessor get-dispatch-method :initarg :dispatch-method)))
+
+(defgeneric do-new-connection (listening-socket tls dispatch-method &key)
   (:documentation
    "This method is implemented for the separate connection types. It waits on
 new (possibly tls) connection to the LISTENING-SOCKET and start handling it
@@ -57,8 +75,12 @@ using DISPATCH-METHOD.
 
 See @IMPLEMENTATIONS for available DISPATCH-METHOD.
 
-TLS is either NIL or :TLS. Note that when using HTTP/2 without TLS, most clients have to be instructed to
-use tls - e.g., --http2-prior-knowledge for curl."))
+TLS is either NIL or :TLS. Note that when using HTTP/2 without TLS, most clients
+have to be instructed to use tls - e.g., --http2-prior-knowledge for curl.
+
+Raise UNSUPPORTED-SERVER-SETUP if there is no relevant method.")
+  (:method (listening-socket tls dispatch-method &key)
+    (error 'unsupported-server-setup :tls tls :dispatch-method dispatch-method)))
 
 (defun callback-on-server (fn &key (thread-name "Test client for a server"))
   "Return a function that takes one parameter, URL, as a parameter and calls FN on

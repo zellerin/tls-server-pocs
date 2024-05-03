@@ -89,7 +89,6 @@ Originally, we have some SOCKET-DATA available, they can be read. Then, we might
       (declare ((unsigned-byte 8) type)
                (frame-size frame-size))
       (when (= type +goaway-frame-type+)
-        (format t "got goaway frame, leaving~%")
         (close-socket socket))
       (unless (>= 16384 frame-size)
         (format t "got too big frame, leaving~%")
@@ -119,7 +118,7 @@ Originally, we have some SOCKET-DATA available, they can be read. Then, we might
                            :event-cb (lambda (err) (format t "--> ~s~%" err)))))))
 
 #+sbcl
-(defmethod do-new-connection (socket (tls (eql nil)) (dispatch-method (eql :async)))
+(defmethod do-new-connection (socket (tls (eql nil)) (dispatch-method (eql :async)) &key)
   "Handle new connections using cl-async event loop.
 
 Pros: This version can be run in one thread and process many clients.
@@ -135,12 +134,9 @@ usocket package, as otherwise access to the port of server is complicated."
                  :event-cb (lambda (err) (format t "--> ~s~%" err))
                  :fd (sb-bsd-sockets:socket-file-descriptor
                       (usocket:socket socket)))))
-  ;; TODO: use kill-server function
-  (invoke-restart 'kill-server)   ; there is an outer loop in create-server that
-                                        ; we want to skip
-  )
+  (kill-server))
 
-(defmethod do-new-connection (socket (tls (eql t)) (dispatch-method (eql :async)))
+(defmethod do-new-connection (socket (tls (eql :tls)) (dispatch-method (eql :async)) &key)
   "Handle new connections using cl-async event loop.
 
 Pros: This version can be run in one thread and process many clients.
@@ -149,20 +145,20 @@ Cons: requires a specific C library, and the implementation as-is depends on
 SBCL internal function - we re-use the file descriptor of socket created by
 usocket package, as otherwise access to the port of server is complicated."
   (let ((ctx (tls-server/mini-http2::make-http2-tls-context)))
+    ;; FIXME: leaks ctx?
     (start-event-loop
      (lambda ()
        (cl-async-ssl:tcp-ssl-server nil nil
-                                            #'callback
-                                            :connect-cb #'on-connect
-                                            :ssl-ctx ctx
-                                            :event-cb (lambda (err) (format t "--> ~s~%" err))
-                                            :fd (sb-bsd-sockets:socket-file-descriptor
-                                                 (usocket:socket socket))))))
-  (invoke-restart 'kill-server)   ; there is an outer loop in create-server that
-                                        ; we want to skip
-  )
+                                    #'callback
+                                    :connect-cb #'on-connect
+                                    :ssl-ctx ctx
+                                    :event-cb (lambda (err) (format t "--> ~s~%" err))
+                                    :fd (sb-bsd-sockets:socket-file-descriptor
+                                         (usocket:socket socket))))))
+  ;; there is an outer loop in create-server that we want to skip
+  (invoke-restart 'kill-server))
 
-(defmethod do-new-connection (socket (tls (eql :nonblock)) (dispatch-method (eql :async)))
+(defmethod do-new-connection (socket (tls (eql :nonblock)) (dispatch-method (eql :async)) &key)
   "Handle new connections using cl-async event loop.
 
 Pros: This version can be run in one thread and process many clients.

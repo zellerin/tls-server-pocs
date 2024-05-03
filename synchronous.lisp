@@ -77,7 +77,7 @@ Terminate if either SSL error occurs, or GO-AWAY restart is invoked."
             (error e))))
     (go-away ())))
 
-(defmethod do-new-connection (listening-socket tls (dispatch-method (eql :none)))
+(defmethod do-new-connection (listening-socket tls (dispatch-method (eql :none)) &key)
   "Handle the connection while doing nothing else.
 
 Serve just one client at time: when it connects, read the incoming requests and
@@ -91,7 +91,7 @@ for one client and in ideal conditions (especially with request pilelining)."
                                                                :element-type '(unsigned-byte 8)))
     (do-connection (maybe-add-tls plain tls))))
 
-(defmethod do-new-connection (listening-socket tls (dispatch-method (eql :thread)))
+(defmethod do-new-connection (listening-socket tls (dispatch-method (eql :thread)) &key)
   "Handle the connection in a new dedicated thread. This is a method that is used,
 e.g., by Hunchentoot."
   (let ((socket (usocket:socket-accept listening-socket
