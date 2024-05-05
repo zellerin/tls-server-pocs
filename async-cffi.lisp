@@ -54,6 +54,10 @@
   (mem-ref (errno%) :int))
 
 
+(mgl-pax:defsection @app-interface
+    (:title "Interface to the application")
+  (set-next-action function))
+
 (mgl-pax:defsection  @async-server
     (:title "Asynchronous TLS server")
   (client type)
@@ -645,6 +649,11 @@ The new possible action corresponding to ① or ⑥ on the diagram above is adde
 
 (defvar *empty-fdset-items* nil "List of empty slots in the fdset table.")
 
+(defun set-next-action (client action size)
+  "Set action for next chunk of received data."
+  (setf (client-io-on-read client) action
+        (client-octets-needed client) size))
+
 (defun make-client-object (socket ctx s-mem)
   "Create new CLIENT object suitable for TLS server.
 
@@ -794,7 +803,7 @@ from C code."
 
 Next, read and process a header."
   (cond ((equalp vec +client-preface-start+)
-         (setf (client-io-on-read client) #'process-header (client-octets-needed client) 9)
+         (set-next-action client #'process-header 9)
          (add-state client 'reply-wanted))
         (t
          (error 'client-preface-mismatch :received vec))))
@@ -805,8 +814,7 @@ Next, read and process a header."
     (format t "Error code: ~s, last strea ~s" (subseq frame 4 8)
             (subseq frame 0 4))
     (write-line (map 'string 'code-char frame) *standard-output* :start 8)
-    (setf (client-io-on-read client) #'process-header
-          (client-octets-needed client) 9)))
+    (set-next-action client #'process-header 9)))
 
 (defun process-header (client header)
   "Process 9 octets as a HTTP2 frame header."
@@ -818,8 +826,7 @@ Next, read and process a header."
       (send-unencrypted-bytes client tls-server/mini-http2::*ack-frame* 'ack-settings))
     (when (= type +goaway-frame-type+)
       ;; TODO: handle go-away frame
-      (setf (client-io-on-read client) #'print-goaway-frame
-            (client-octets-needed client) frame-size)
+      (set-next-action client #'print-goaway-frame frame-size)
       (return-from process-header))
     (unless (>= 16384 frame-size)
       (error  "Too big header! go-away"))
@@ -847,21 +854,17 @@ process to read the next header."
   (declare (ignorable client vec))
 
   (when (zerop (incf (client-octets-needed client) (- to from)))
-    (setf (client-io-on-read client) #'process-header
-          (client-octets-needed client) 9)
+    (set-next-action client #'process-header 9)
     (on-complete-ssl-data client))
   (- to from))
 
 (defun pull-from-ignore (client) ; name me
   (pull-push-bytes client
                    #'really-ignore-bytes
-                   #'really-ignore)
-#+nil  (on-complete-ssl-data client))
+                   #'really-ignore))
 
 (defun ignore-bytes (client count)
   (if (zerop count)
-      (setf (client-octets-needed client) 9
-            (client-io-on-read client) #'process-header)
-      (setf (client-octets-needed client) (- count)
-            (client-io-on-read client) #'pull-from-ignore))
+      (set-next-action client #'process-header 9)
+      (set-next-action client #'pull-from-ignore (- count)))
   t)
