@@ -297,12 +297,15 @@ and passed."
            (add-state client 'can-read-bio)
            res)
           (t (let ((status (ssl-get-error ssl res)))
-               (when (not (member status
-                                  (list ssl-error-none ssl-error-want-write ssl-error-want-read)))
-                 (error "SSL write failed, status ~d" status))
-               (remove-state client 'can-write-ssl)
-               (add-state client 'has-data-to-encrypt)
-               0))))))
+               (cond ((member status
+                                  (list ssl-error-none ssl-error-want-write ssl-error-want-read))
+                      (remove-state client 'can-write-ssl)
+                      (add-state client 'has-data-to-encrypt)
+                      0)
+                     ((= status ssl-error-zero-return)
+                      (warn "Peer send close notify alert. One possible cause - it does not like our certificate")
+                      (signal 'done))
+                     (t (error "SSL write failed, status ~d" status)))))))))
 
 (defun encrypt-data (client)
   "Encrypt data in client's ENCRYPT-BUF.
