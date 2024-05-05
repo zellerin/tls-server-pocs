@@ -121,7 +121,8 @@ The actions are in general indicated by arrows in the diagram:
 - Encrypted octets to send to the file descriptor (ENCRYPT-BUF),
 - Callback function when read data are available (IO-ON-READ).
 - Number of octets required by IO-ON-READ. Negative values have special handling.
-- Client state from the low-level data flow point of view (STATE)"
+- Client state from the low-level data flow point of view (STATE)
+- Application data (slot to be used by the application)"
   (fd -1 :type fixnum :read-only t)
   (ssl (null-pointer) :type cffi:foreign-pointer :read-only nil) ; mostly RO, but invalidated afterwards
   (rbio (null-pointer) :type cffi:foreign-pointer :read-only t)
@@ -138,7 +139,7 @@ The actions are in general indicated by arrows in the diagram:
   ;; set of CAN-READ-PORT, CAN-READ-SSL, HAS-DATA-TO-ENCRYPT, CAN-WRITE-SSL,
   ;; CAN-READ-BIO, HAS-DATA-TO-WRITE, CAN-WRITE
   ;; BIO-NEEDS-READ SSL-INIT-NEEDED
-  )
+  application-data)
 
 (defmacro define-reader (name source args &body body &aux declaration)
   (when (eq (caar body) 'declare)
