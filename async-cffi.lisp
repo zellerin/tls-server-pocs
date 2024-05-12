@@ -54,13 +54,10 @@
   (mem-ref (errno%) :int))
 
 
-(mgl-pax:defsection @app-interface
-    (:title "Interface to the application")
-  (set-next-action function))
-
 (mgl-pax:defsection  @async-server
     (:title "Asynchronous TLS server")
   (client type)
+  (@app-interface mgl-pax:section)
   (@request-handling mgl-pax:section)
   (@communication-setup mgl-pax:section))
 
@@ -94,24 +91,12 @@ When POLL returns, new action is available for some client (read from a socket o
 The actions are in general indicated by arrows in the diagram:
 
 ![](flow.svg)"
-#+nil "
-| Code | Reader/writer | Wrapper                     |
-|------|---------------|-----------------------------|
-|    1 | read-2        | read-from-peer              |
-|    2 | bio-write     | write-octets-to-decrypt     |
-|    3 | ssl-read%     | ssl-read                    |
-|    4 | ssl-write     | encrypt-some                |
-|    5 | bio-read%     | read-encrypted-from-openssl |
-|    6 | write-2       | send-to-peer                |
-|    U |               | send-unencrypted-bytes      |
-"
+
   (process-client-fd function)
   (do-available-actions function)
   (select-next-action function)
 
   (process-data-on-socket function)
-  (ssl-read function)
-  (send-unencrypted-bytes function)
   (encrypt-data function)
   (move-encrypted-bytes function)
   (write-data-to-socket function))
@@ -120,6 +105,8 @@ The actions are in general indicated by arrows in the diagram:
   "Initial size of the vector holding data to encrypt.")
 
 (defvar *default-buffer-size* 1500) ; close to socket size
+
+(defvar *client-hello-callback* nil)
 
 (defstruct (client  (:constructor make-client%)
             (:print-object
@@ -131,8 +118,8 @@ The actions are in general indicated by arrows in the diagram:
 - File descriptor of underlying socket (FD),
 - Opaque pointer to the openssl handle (SSL),
 - Input and output BIO for exchanging data with OPENSSL (RBIO, WBIO),
-- Unencrypted octets to encrypt and send (WRITE-BUF),
-- Encrypted octets to send to the file descriptor (ENCRYPT-BUF),
+- Plain text octets to encrypt and send (ENCRYPT-BUF),
+- Encrypted octets to send to the file descriptor (WRITE-BUF),
 - Callback function when read data are available (IO-ON-READ).
 - Number of octets required by IO-ON-READ. Negative values have special handling.
 - Client state from the low-level data flow point of view (STATE)
@@ -144,7 +131,7 @@ The actions are in general indicated by arrows in the diagram:
   (write-buf nil :type (or null cons))
   (encrypt-buf (make-array *encrypt-buf-size* :element-type '(unsigned-byte 8))
    :type (simple-array (unsigned-byte 8)))
-  (io-on-read #'process-client-hello :type compiled-function)
+  (io-on-read *client-hello-callback* :type compiled-function)
   (fdset-idx 0 :type fixnum :read-only nil) ; could be RO, but...
   (octets-needed +client-preface-length+ :type fixnum)
   (encrypt-buf-size 0 :type fixnum)
@@ -673,7 +660,6 @@ reading of client hello."
                                :rbio (bio-new s-mem)
                                :wbio (bio-new s-mem)
                                :ssl (ssl-new ctx)
-                               :io-on-read #'process-client-hello
                                :octets-needed +client-preface-length+)))
     (ssl-set-accept-state (client-ssl client)) ; no return value
     (ssl-set-bio (client-ssl client) (client-rbio client) (client-wbio client))
@@ -803,7 +789,10 @@ Default -1 means an indefinite wait.")
             (close-client-connection fdset client)))))))
 
 (defmethod do-new-connection (socket (tls (eql :tls)) (dispatch-method (eql :async-custom))
-                              &key ((:nagle *nagle*) *nagle*))
+                              &key
+                                ((:nagle *nagle*) *nagle*)
+                                ((:client-hello-callback *client-hello-callback*)
+                                 (or *client-hello-callback* #'process-client-hello)))
   "Handle new connections by adding pollfd to and then polling.
 
 When poll indicates available data, process them with openssl using BIO. Data to
@@ -833,9 +822,7 @@ from C code."
          (handle-ssl-errors client read))
         ((/= read octets)
          (error "Read ~d octets. This is not enough octets, why?~%~s~%" read (subseq vec 0 read)))
-        (t (funcall fn client vec)
-           t ; read more data
-           )))))
+        (t (funcall fn client vec))))))
 
 (defun process-client-hello (client vec)
   "Check first received octets to verify they are the client hello string.
