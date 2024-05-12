@@ -64,6 +64,16 @@
   (@request-handling mgl-pax:section)
   (@communication-setup mgl-pax:section))
 
+(mgl-pax:defsection @app-interface
+    (:title "Interface to the application")
+  (client-application-data function)
+  (set-next-action function)
+  (ssl-read function)
+  (send-unencrypted-bytes function)
+  (poll-timeout condition)
+  (*no-client-poll-timeout* variable)
+  (*poll-timeout* variable))
+
 (mgl-pax:defsection @communication-setup
     (:title "HTTP2 handling")
   (make-ssl-context function)
@@ -745,6 +755,30 @@ reading of client hello."
         (kill-http-connection ()
           (close-client-connection fdset client))))))
 
+(define-condition poll-timeout (error)
+  ()
+  (:documentation
+   "Poll was called with a timeout and returned before any file descriptor became
+ready."))
+
+(defvar *no-client-poll-timeout* -1
+        "Timeout in ms to use when there is no client (to limit time to a client to
+connect).
+
+This is supposed to be used primarily in the automated tests, where you do not
+want indefinite waits in case of a problem.
+
+On timeout signals POLL-TIMEOUT error.
+
+Default -1 means an indefinite wait.")
+
+(defvar *poll-timeout* -1
+  "Timeout to use for poll in ms when there connected clients, but no client communication.
+
+On timeout signals POLL-TIMEOUT error.
+
+Default -1 means an indefinite wait.")
+
 (defun serve-tls (listening-socket)
   (with-foreign-object (fdset '(:struct pollfd) *fdset-size*)
     (init-fdset fdset *fdset-size*)
@@ -757,7 +791,9 @@ reading of client hello."
         (setup-new-connect-pollfd fdset listening-socket)
         (unwind-protect
              (loop
-               (let ((nread (poll fdset *fdset-size* -1)))
+               (let ((nread (poll fdset *fdset-size*
+                                  (if *clients* *poll-timeout* *no-client-poll-timeout*))))
+                 (when (zerop nread) (cerror "Ok" 'poll-timeout))
                  (process-new-client fdset listening-socket ctx s-mem)
                  (process-client-sockets fdset nread)))
           (dolist (client *clients*)
