@@ -728,11 +728,14 @@ reading of client hello."
     (if (plusp (logand c-pollin revents))
         (let* ((socket (accept
                         (sb-bsd-sockets::socket-file-descriptor (usocket:socket listening-socket)) (null-pointer) 0))
-               (client (make-client-object socket ctx s-mem)))
-          (setup-port socket *nagle*)
-          (add-socket-to-fdset fdset socket client)
-          ;; maybe TODO: if no fdset slot available, stop reading listening socket
-          (push client *clients*)))
+               (client (when *empty-fdset-items* (make-client-object socket ctx s-mem))))
+          (cond
+            (client
+             (setup-port socket *nagle*)
+             (add-socket-to-fdset fdset socket client)
+             (push client *clients*))
+            (t (close-fd socket)
+               (warn "Too many clients, refused to connect a new one.")))))
     (if (plusp (logand revents  (logior c-POLLERR  c-POLLHUP  c-POLLNVAL)))
         (error "Error on listening socket"))))
 
