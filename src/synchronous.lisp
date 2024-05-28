@@ -74,7 +74,10 @@ Terminate if either SSL error occurs, or GO-AWAY restart is invoked."
             (error e)))
         (stream-error (e)
           (unless (member (type-of e) '(sb-int:broken-pipe))
-            (error e))))
+            (error e)))
+        (incomplete-octet-read ()
+          ;; peer closed connection, nothing we can do (but log it)
+          ))
     (go-away ())))
 
 (defmethod do-new-connection (listening-socket tls (dispatch-method (eql :none)) &key)

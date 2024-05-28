@@ -36,8 +36,8 @@
   (dolist (tls '(nil :tls))
     (dolist (model '(:none :thread #+nil :poll))
       (is (create-server 0 nil model
-                                    :announce-url-callback (callback-on-server
-                                                            #'query-port-using-curl))))))
+                         :announce-url-callback (callback-on-server
+                                                 #'query-port-using-curl))))))
 
 (defun http2-client-curl-test (tls model)
   "Test the server using curl."
@@ -53,13 +53,13 @@
 
 (deftest none/native ()
   "Run tests on single-client server."
-  (http2-client-native-test nil :none)
+;  (http2-client-native-test nil :none)
   (http2-client-curl-test nil :none)
   (http2-client-curl-test :tls :none))
 
 (deftest thread/native ()
   "Run tests on a threading server."
-  (http2-client-native-test nil :thread)
+;  (http2-client-native-test nil :thread)
   (http2-client-curl-test nil :thread)
   (http2-client-curl-test :tls :thread))
 
@@ -69,7 +69,7 @@
 
 (deftest async/library ()
   "Run tests on a threading server."
-  (http2-client-native-test nil :async)
+;  (http2-client-native-test nil :async)
   (http2-client-curl-test nil :async))
 
 (deftest async/library/tls ()

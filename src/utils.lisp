@@ -1,27 +1,36 @@
 (in-package tls-server/utils)
 
 (mgl-pax:defsection @octets (:title "Work with octets")
-    "Simplify work with octet vectors"
+    "Octet vectors are core of the HTTP/2 protocols. Some utilities are needed again
+and again. This should be imported from some generic library, if I new about it."
   (octet-vector type)
   (octetize function)
-  (fully-read-array function))
+  (fully-read-array function)
+  (incomplete-octet-read condition))
 
 (deftype octet-vector ()
   "Simple (i.e., not adjustable and w/o fill pointer) one-dimensional array of
 octets"
   '(simple-array (unsigned-byte 8) (*)))
 
+(define-condition incomplete-octet-read (error)
+  ()
+  (:documentation "Signalled by FULLY-READ-ARRAY when there is not enough data.
+
+This usually means that peer closed connection. Invoking GO-AWAY restart is
+often the way to handle this."))
+
 (defun fully-read-array (stream vector to-read)
-  "Read TO-READ octets to the octet VECTOR.
+  "Read TO-READ octets to the octet VECTOR from STREAM.
 
 Lisp standard says that read-sequence returns less than required bytes only on
-EOF, and we rely on that; if this happens, invoke GO-AWAY restart."
+EOF, and we rely on that; if this happens, raise INCOMPLETE-OCTET-READ."
   (declare ((integer 0 #.array-dimension-limit) to-read)
            (octet-vector vector))
   (let ((read (read-sequence vector stream :start 0
                                            :end to-read)))
     (unless (= read to-read)
-      (invoke-restart 'go-away))
+      (error 'INCOMPLETE-OCTET-READ))
     vector))
 
 (defun octetize (array)
@@ -30,10 +39,9 @@ EOF, and we rely on that; if this happens, invoke GO-AWAY restart."
                              :initial-contents array))
 
 (mgl-pax:defsection @mgl-extensions (:title "New locatives")
-    "Define a  locative to document CFFI callbacks."
+    "Define a locative to document CFFI callbacks."
   (define-documented-callback mgl-pax:macro)
   (callback mgl-pax:locative))
-
 
 (defclass callback ()
   ((name :accessor get-name :initarg :name)

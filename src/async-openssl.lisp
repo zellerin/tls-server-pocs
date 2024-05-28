@@ -443,9 +443,9 @@ however, it used directly cffi and sets some parameters in a different way."
           (asdf:component-pathname (asdf:find-system "tls-server"))))
     (when (null-pointer-p context)
       (error "Could not create context"))
-    (use-pem-for context #'ssl-ctx-use-certificate-file #P"certs/server.pem"
+    (use-pem-for context #'ssl-ctx-use-certificate-file #P"../certs/server.pem"
                  "failed to load server certificate")
-    (use-pem-for context #'ssl-ctx-use-privatekey-file #P"certs/server.key"
+    (use-pem-for context #'ssl-ctx-use-privatekey-file #P"../certs/server.key"
                  "failed to load server private key")
     (unless (= 1 (ssl-ctx-check-private-key context))
       (error "server private/public key mismatch"))

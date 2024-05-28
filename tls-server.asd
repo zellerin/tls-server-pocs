@@ -15,15 +15,15 @@
   :defsystem-depends-on ("cffi-grovel")
   :pathname "src"
   :components ((:file "package")
-               (:file "server")
                (:file "utils")
+               (:file "server")
                (:file "http2")
                (:file "tls")
                (:file "synchronous")
                (:file "with-http2-lib")
                (:file "uv")
-               (:cffi-grovel-file "async-grovel")
-               (:file "async-cffi")))
+               (:cffi-grovel-file "async-openssl-grovel")
+               (:file "async-openssl")))
 
 (defsystem #:tls-server/test
   :depends-on ("tls-server" "fiasco" "cl-ppcre" "puri" "http2/client")

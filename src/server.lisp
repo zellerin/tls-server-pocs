@@ -3,7 +3,11 @@
 (mgl-pax:defsection @server-actions
     (:title "Generic server interface")
   "The functions below implement server creation on an abstract level. Individual
-server types implement appropriate methods to ensure desired behaviour."
+server types implement appropriate methods to ensure desired behaviour.
+
+The main entry point is CREATE-SERVER; CALLBACK-ON-SERVER is useful for connecting to created server from separate thread.
+
+Each method needs to implement DO-NEW-CONNECTION."
   (create-server function)
   (do-new-connection generic-function)
   (kill-server restart)
@@ -14,33 +18,38 @@ server types implement appropriate methods to ensure desired behaviour."
   (url-from-socket function)
   (url-from-port function)
   ;; TODO: remove/fix
-  (*buffer* variable))
+  (*buffer* variable)
+  (unsupported-server-setup condition))
 
 (defun create-server (port tls dispatch-method
                       &rest keys
                       &key
                         (host "127.0.0.1")
                         (announce-url-callback (constantly nil))
-                        &allow-other-keys)
-  "Create a server on HOST and PORT that handles connections (possibly with TLS) using
-DISPATCH-METHOD.
+                        full-http
+                      &allow-other-keys)
+  "Create a server on HOST and PORT that handles connections (possibly with TLS)
+using DISPATCH-METHOD.
 
 ANNOUNCE-URL-CALLBACK is called when server is set up on the TCP level and
 receives one parameter, URL that server listens on. The idea is to be able to connect
-to server when PORT is 0, that is, random port.
+to server when PORT is 0, that is, random port, especially for automated tests.
 
 Establishes restart KILL-SERVER to close the TCP connection and return.
 
 Calls DO-NEW-CONNECTION to actually handle the connections after the callback
-returns This function also receives the listening socket ad TLS and
-DISPATCH-METHOD as parameters."
+returns This function also receives the listening socket and TLS and
+DISPATCH-METHOD as parameters.
+
+Additional keyword parameters are allowed; they are defined and consumed by
+individual connection methods. One of them is FULL-HTTP. Some methods use that
+to use HTTP/2 library instead of simplified HTTP/2 implementation defined in
+this package. The default value is intentionally unspecified."
   (restart-case
       (usocket:with-socket-listener (listening-socket host port
                                                       :reuse-address t
                                                       :element-type '(unsigned-byte 8))
         (funcall announce-url-callback (url-from-socket listening-socket host tls))
-        (remf keys :host)
-        (remf keys :announce-url-callback)
         (loop
           (apply 'do-new-connection listening-socket tls dispatch-method keys)))
     (kill-server (&optional value) :report "Kill server" value)))
@@ -67,7 +76,7 @@ This is to be used as callback fn on an open server for testing it."
   ((tls             :accessor get-tls             :initarg :tls)
    (dispatch-method :accessor get-dispatch-method :initarg :dispatch-method)))
 
-(defgeneric do-new-connection (listening-socket tls dispatch-method &key)
+(defgeneric do-new-connection (listening-socket tls dispatch-method &key &allow-other-keys)
   (:documentation
    "This method is implemented for the separate connection types. It waits on
 new (possibly tls) connection to the LISTENING-SOCKET and start handling it

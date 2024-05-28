@@ -1,5 +1,9 @@
 ;;;; Copyright (c) 2023, 2024 Tomáš Zellerin <tomas@zellerin.cz>
 
+(mgl-pax:define-package #:tls-server/utils
+  (:use #:cl #:mgl-pax)
+  (:documentation "Octet processing utilities. See TLS-SERVER/UTILS::@OCTETS"))
+
 (mgl-pax:define-package #:tls-server
     (:use #:cl #:mgl-pax)
   (:export #:@index #:@overview)
@@ -11,12 +15,6 @@ restarts. See @SERVER-ACTIONS.
 Also holds the top-level documentation sections, @INDEX and @OVERVIEW."))
 
 (in-package #:tls-server)
-
-(define-package #:tls-server/utils
-  (:use #:cl #:mgl-pax
-        ;; TODO: just go-away restart...
-        #:tls-server)
-  (:documentation "Octet processing utilities. See TLS-SERVER/UTILS::@OCTETS"))
 
 (define-package #:tls-server/mini-http2
   (:use #:cl #:tls-server/utils
@@ -38,8 +36,8 @@ Also holds the top-level documentation sections, @INDEX and @OVERVIEW."))
 
 (defsection @packages
     (:title "Packages")
-  (tls-server package)
-  (tls-server/utils package)
+  (#:tls-server package)
+  (#:tls-server/utils package)
   (#:tls-server/mini-http2 package))
 
 (defsection @index
