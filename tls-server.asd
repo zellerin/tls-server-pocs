@@ -13,6 +13,7 @@
   :depends-on ("cl+ssl" "usocket" "bordeaux-threads" "mgl-pax" "puri" "http2"
                         "cl-async-ssl" "cffi")
   :defsystem-depends-on ("cffi-grovel")
+  :pathname "src"
   :components ((:file "package")
                (:file "server")
                (:file "utils")
