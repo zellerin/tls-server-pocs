@@ -31,14 +31,6 @@
                   `("curl" ,(puri:render-uri url nil) "-k" "--http2-prior-knowledge")
                   :output :string)))))
 
-(deftest http2-client-curl ()
-  "Test the server using curl."
-  (dolist (tls '(nil :tls))
-    (dolist (model '(:none :thread #+nil :poll))
-      (is (create-server 0 nil model
-                         :announce-url-callback (callback-on-server
-                                                 #'query-port-using-curl))))))
-
 (defun http2-client-curl-test (tls model)
   "Test the server using curl."
   (is (create-server 0 tls model
@@ -53,23 +45,27 @@
 
 (deftest none/native ()
   "Run tests on single-client server."
-;  (http2-client-native-test nil :none)
   (http2-client-curl-test nil :none)
   (http2-client-curl-test :tls :none))
 
 (deftest thread/native ()
   "Run tests on a threading server."
-;  (http2-client-native-test nil :thread)
   (http2-client-curl-test nil :thread)
   (http2-client-curl-test :tls :thread))
 
+(deftest thread/nonblock/async ()
+  "Run tests on a threading server."
+  (http2-client-curl-test :nonblock :async))
+
 (deftest async/custom ()
   "Run tests on a threading server."
-  (http2-client-curl-test :tls :async-custom))
+  (http2-client-curl-test :tls :async-custom)
+  (let ((err (signals unsupported-server-setup (create-server 0 nil :async-custom))))
+    (is (null (tls-server::get-tls err)))
+    (is (eq :async-custom (tls-server::get-dispatch-method err)))))
 
 (deftest async/library ()
   "Run tests on a threading server."
-;  (http2-client-native-test nil :async)
   (http2-client-curl-test nil :async))
 
 (deftest async/library/tls ()

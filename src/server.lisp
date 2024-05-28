@@ -1,6 +1,6 @@
 (in-package #:tls-server)
 
-(mgl-pax:defsection @server-actions
+(defsection @server-actions
     (:title "Generic server interface")
   "The functions below implement server creation on an abstract level. Individual
 server types implement appropriate methods to ensure desired behaviour.
@@ -45,6 +45,7 @@ Additional keyword parameters are allowed; they are defined and consumed by
 individual connection methods. One of them is FULL-HTTP. Some methods use that
 to use HTTP/2 library instead of simplified HTTP/2 implementation defined in
 this package. The default value is intentionally unspecified."
+  (declare (ignore full-http))
   (restart-case
       (usocket:with-socket-listener (listening-socket host port
                                                       :reuse-address t
