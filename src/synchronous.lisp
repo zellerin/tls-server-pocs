@@ -1,3 +1,6 @@
+(mgl-pax:define-package #:tls-server/synchronous
+  (:use #:cl #:tls-server/mini-http2 #:tls-server #:tls-server/utils))
+
 (in-package :tls-server/synchronous)
 
 (mgl-pax:defsection @synchronous

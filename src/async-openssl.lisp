@@ -1,3 +1,6 @@
+(define-package #:tls-server/async/tls
+  (:use #:cl #:tls-server/mini-http2 #:cffi #:tls-server))
+
 (in-package #:tls-server/async/tls)
 
 (define-foreign-library openssl (:unix "libssl.so"))

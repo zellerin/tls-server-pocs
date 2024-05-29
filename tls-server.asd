@@ -3,8 +3,35 @@
 ;;;; Copyright (c) 2023 Tomáš Zellerin <tomas@zellerin.cz>
 
 
-(asdf:defsystem #:tls-server
+(asdf:defsystem #:tls-server/core
   :description "Various implementations of toy HTTP2 server."
+  :author "Tomáš Zellerin <tomas@zellerin.cz>"
+  :license  "MIT"
+  :version "0.9"
+  :serial t
+  :in-order-to ((asdf::test-op (asdf:test-op "tls-server/test")))
+  :depends-on ("mgl-pax" "usocket" "puri" "bordeaux-threads")
+  :defsystem-depends-on ("cffi-grovel")
+  :pathname "src"
+  :components ((:file "package")
+               (:file "utils")
+               (:file "server")
+               (:file "http2")))
+
+(asdf:defsystem #:tls-server/synchronous
+  :description "Synchronous implementations of toy HTTP2 server."
+  :author "Tomáš Zellerin <tomas@zellerin.cz>"
+  :license  "MIT"
+  :version "0.9"
+  :serial t
+  :depends-on ("tls-server/core" "cl+ssl" "http2")
+  :defsystem-depends-on ("cffi-grovel")
+  :pathname "src"
+  :components ((:file "tls")
+               (:file "synchronous")))
+
+(asdf:defsystem #:tls-server/synchronous
+  :description "Synchronous implementations of toy HTTP2 server."
   :author "Tomáš Zellerin <tomas@zellerin.cz>"
   :license  "MIT"
   :version "0.9"
@@ -33,7 +60,7 @@
                                         :verbose t)
                            (symbol-call :fiasco '#:run-package-tests :package '#:tls-server/tests
                                         :verbose t))
-  :serial t)
+                         :serial t)
   :license  "MIT"
   :pathname "tests"
   :components ((:file "package")

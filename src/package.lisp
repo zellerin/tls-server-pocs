@@ -23,23 +23,13 @@ Also holds the top-level documentation sections, @INDEX and @OVERVIEW."))
   (:documentation
    "Basic functionality for low-level HTTP2 implementation."))
 
-(define-package #:tls-server/synchronous
-  (:use #:cl #:tls-server/mini-http2 #:tls-server #:tls-server/utils))
-
-(define-package #:tls-server/async
-  (:use #:cl #:tls-server/mini-http2 #:tls-server/mini-http2 #:tls-server)
-  (:import-from #:cl-async #:socket-data #:write-socket-data #:close-socket
-                #:start-event-loop #:tcp-server))
-
-(define-package #:tls-server/async/tls
-  (:use #:cl #:tls-server/mini-http2 #:cffi #:tls-server))
-
 (defsection @packages
     (:title "Packages")
   (#:tls-server package)
   (#:tls-server/utils package)
   (#:tls-server/mini-http2 package))
 
+#+nil
 (defsection @index
     (:title "Experiments with HTTP/2 server")
 
@@ -54,7 +44,7 @@ So this repository implements:
   HTTP/2 protocol, and based of that
 - several versions of TCP server that accept and handle the request."
 
-"Presently, the most advanced is the async version that uses CFFI
+  "Presently, the most advanced is the async version that uses CFFI
 ![](images/five-clients.png)
 ![](images/single-client.png)
 "

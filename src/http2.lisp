@@ -137,7 +137,8 @@ Signal CLIENT-PREFACE-MISMATCH on mismatch."
   (force-output stream))
 
 
-
+;;; FIXME: move to some client/test utils if needed.
+#+nil
 (defun make-requests-vector (requests-count)
   "Make a vector that contains client hello, "
   (loop with size = (+ +client-preface-length+
@@ -146,7 +147,7 @@ Signal CLIENT-PREFACE-MISMATCH on mismatch."
                        (* requests-count (+ 9 (length *request-headers*)))
                        9 8)
         with vector = (make-array size
-                                :element-type '(unsigned-byte 8))
+                                  :element-type '(unsigned-byte 8))
         initially
            (replace vector +client-preface-start+)
            (replace vector *settings-frame* :start1 +client-preface-length+)
@@ -174,7 +175,8 @@ This is used by implementation that use usocket sockets.")
   (:method (socket (tls (eql nil)))
     (usocket:socket-stream socket)))
 
-
+;;; FIXME: remove or move to cl+ssl support
+#+nil
 (defun send-requests (host &key (count 10) (port 443) (sni host) verify
                              (alpn-protocols '("h2")))
   (let ((stream
