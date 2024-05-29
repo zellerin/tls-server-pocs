@@ -105,4 +105,5 @@ e.g., by Hunchentoot."
        (unwind-protect
             (do-connection (maybe-add-tls socket tls))
          (usocket:socket-close socket)))
-     :name "HTTP2 connection server")))
+     ;; TODO: peer IP and port to name?
+     :name "HTTP2 server thread for connection" )))
