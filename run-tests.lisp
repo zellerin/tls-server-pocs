@@ -11,15 +11,10 @@
   `(locally (declare (optimize (sb-cover:store-coverage-data 0)))
      ,(funcall *old-mgl-pax-fn* body env)))
 
-(asdf:load-asd "tls-server.asd")
+(asdf:load-asd (merge-pathnames "tls-server.asd" *load-pathname*))
 
 (asdf:oos 'asdf:load-op :tls-server :force t)
 (asdf:oos 'asdf:load-op :tls-server/clip)
-
-(compile-file "src/server.lisp")
-(load "src/server.lisp")
-
-
 
 (asdf:oos 'asdf:test-op 'tls-server)
 (mgl-pax:update-asdf-system-html-docs tls-server:@index "tls-server")
