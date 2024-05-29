@@ -57,7 +57,7 @@ Terminate if either SSL error occurs, or GO-AWAY restart is invoked."
           (let ((*buffer* (make-array 16385
                                        :element-type '(unsigned-byte 8)
                                        :initial-element 0)))
-            (declare (dynamic-extent buffer))
+            (declare (dynamic-extent *buffer*))
             (read-client-preface stream)
             (write-sequence *settings-frame* stream)
             (write-sequence *ack-frame* stream)
