@@ -31,11 +31,12 @@
                   `("curl" ,(puri:render-uri url nil) "-k" "--http2-prior-knowledge")
                   :output :string)))))
 
-(defun http2-client-curl-test (tls model)
+(defun http2-client-curl-test (tls model &rest args)
   "Test the server using curl."
-  (is (create-server 0 tls model
+  (is (apply #'create-server 0 tls model
                      :announce-url-callback (callback-on-server
-                                             #'query-port-using-curl))))
+                                             #'query-port-using-curl)
+                     args)))
 
 (defun http2-client-native-test (tls model)
   "Test the server from http2-based client."
@@ -59,7 +60,8 @@
 
 (deftest async/custom ()
   "Run tests on a threading server."
-  (http2-client-curl-test :tls :async-custom)
+  (dolist (full-http '(nil t))
+    (http2-client-curl-test :tls :async-custom  :full-http full-http))
   (let ((err (signals unsupported-server-setup (create-server 0 nil :async-custom))))
     (is (null (tls-server::get-tls err)))
     (is (eq :async-custom (tls-server::get-dispatch-method err)))))

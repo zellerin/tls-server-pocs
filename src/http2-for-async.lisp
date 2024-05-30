@@ -1,8 +1,22 @@
 (mgl-pax:define-package tls-server/async/http2
-  (:use :cl :http2 :tls-server/async/tls)
+  (:use #:cl #:http2 #:tls-server/async/tls #:mgl-pax)
   (:shadow #:client #:make-client-object))
 
 (in-package tls-server/async/http2)
+
+(defsection @full-async-http
+    (:title "Asynchronous HTTP/2 using the http2 library")
+  "Here we match together all the pieces we already have to provide full
+single-thread multiple clients HTTP/2 server that supports most of the HTTP/2
+features."
+
+  "We need a dedicated HTTP/2 connection and stream classes to specialize the behaviour."
+  (async-stream class)
+  (async-server class)
+  "Async server needs initial callback function to call when client data
+arrive. This would be HTTP2-HELLO."
+  (http2-hello function)
+  )
 
 (defclass async-stream (http2::server-stream)
   ())
@@ -16,48 +30,37 @@
   (:default-initargs :stream-class 'async-stream))
 
 (defun http2-hello (client vec)
+  "Process client hello and set up the connection instance.
+
+Next would be reading the OPTIONS frame."
   (process-client-hello client vec)
   (setf (client-application-data client)
-        (make-instance 'async-server :tls-server client))
+        (make-instance 'async-server
+                       :tls-server client
+                       ;; this class is defined in http2/tests, move to better place
+                       :network-stream (make-instance 'http2::pipe-end-for-write
+                                                      :write-buffer (make-array 4096 :fill-pointer 0
+                                                                                     :element-type '(unsigned-byte 8)))))
   (set-next-action client #'check-options-process-header 9))
 
-(defun next-action-wrapper (fn)
-  (lambda (client data)
-    (let* ((stream (make-instance 'http2::pipe-end-for-read  :buffer data :index 0))
-           (connection (client-application-data client))
-           (padded (get-padded connection))
-           (length (length data))
-           (padding-size (when padded (aref data 0))))
-      (setf (http2::get-network-stream connection) stream)
-      (when (and padded (>= padding-size length))
-        (http2:connection-error 'too-big-padding connection))
+(defparameter *full-http-process-client-hello* #'http2-hello)
 
-      (funcall fn stream connection (get-active-stream connection)
-               (if padded (- length 1 padding-size) length)
-               (get-flags connection))
-      (setf (http2::get-network-stream connection) client)
-      (http2::maybe-end-stream (get-end-of-stream connection) (get-active-stream connection))
-      (set-next-action client #'process-header-by-wrapping 9))))
+(defun wrap-http2-callback (callback)
+  (lambda (client header)
+    (multiple-value-bind (fn size)
+        (funcall callback (client-application-data client) header)
+      (declare (type compiled-function fn)
+               (fixnum size))
+      (set-next-action client (wrap-http2-callback fn) size))))
 
 (defun process-header-by-wrapping (client header)
-  (multiple-value-bind (fn connection stream-or-connection length flags
-                        padding-size end-of-stream)
-      (http2::process-frame-header-only header (client-application-data client))
-    (setf (get-active-stream connection) stream-or-connection
-          (get-flags connection) flags
-          (get-padded connection) padding-size
-          (get-end-of-stream connection) end-of-stream)
-    (cond
-      ((zerop length)
-       (funcall (next-action-wrapper fn) client #()))
-      (t (set-next-action client (next-action-wrapper fn) length)))))
+  "Read next frame header and process it."
+  (funcall (wrap-http2-callback #'http2::parse-frame-header) client header))
 
 (defun check-options-process-header (client header)
+  "Read next frame and process it."
   (assert (= (aref header 3) 4))
   (process-header-by-wrapping client header))
-
-(defun process-settings-header (client header)
-  (error "No longer used"))
 
 (defun get-32bit (vector idx)
   (let ((stream-id 0))
@@ -96,7 +99,7 @@
                             'ack)))
 
 (defmethod http2::peer-ends-http-stream ((stream async-stream))
-  (let ((client (http2::get-network-stream (get-connection stream)))
+  (let ((client (get-tls-server (get-connection stream)))
         (id-to-process (http2::get-stream-id stream)))
     (send-unencrypted-bytes client
                             (tls-server/async/tls::buffer-with-changed-stream tls-server/async/tls::*header-frame* id-to-process)

@@ -10,7 +10,7 @@
   :version "0.9"
   :serial t
   :in-order-to ((asdf::test-op (asdf:test-op "tls-server/test")))
-  :depends-on ("mgl-pax" "usocket" "puri" "bordeaux-threads")
+  :depends-on ("mgl-pax" "usocket" "puri" "bordeaux-threads" "cffi")
   :pathname "src"
   :components ((:file "package")
                (:file "utils")
@@ -52,15 +52,16 @@
                (:cffi-grovel-file "async-openssl-grovel")
                (:file "async-openssl")))
 
-(asdf:defsystem #:tls-server
-  :description "Synchronous implementations of toy HTTP2 server."
-  :author "Tomáš Zellerin <tomas@zellerin.cz>"
-  :license  "MIT"
-  :version "0.9"
+(asdf:defsystem #:tls-server/async-openssl/full-http
+  :version "0"
+  :description "Async version that uses http2 library"
+  :depends-on (#:tls-server/async-openssl #:http2/server)
   :serial t
-  :in-order-to ((asdf::test-op (asdf:test-op "tls-server/test")))
-  :depends-on (#:tls-server/synchronous #:tls-server/async #:tls-server/async-openssl)
-  :components ((:file "src/doc")))
+  :pathname "src"
+  :components ((:file "http2-for-async"))
+  ;; :long-description ""
+  )
+
 
 (defsystem #:tls-server/test
   :depends-on ("tls-server" "fiasco" "cl-ppcre" "puri" "http2/client")
@@ -83,3 +84,14 @@
   :license  "MIT"
   :pathname "clip"
   :components ((:file "setup")))
+
+(asdf:defsystem #:tls-server
+  :description "Synchronous implementations of toy HTTP2 server."
+  :author "Tomáš Zellerin <tomas@zellerin.cz>"
+  :license  "MIT"
+  :version "0.9"
+  :serial t
+  :in-order-to ((asdf::test-op (asdf:test-op "tls-server/test")))
+  :depends-on (#:tls-server/synchronous #:tls-server/async #:tls-server/async-openssl
+                                        #:tls-server/async-openssl/full-http)
+  :components ((:file "src/doc")))

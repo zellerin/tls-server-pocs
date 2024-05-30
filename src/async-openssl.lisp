@@ -69,13 +69,15 @@
   (send-unencrypted-bytes function)
   (poll-timeout condition)
   (*no-client-poll-timeout* variable)
-  (*poll-timeout* variable))
+  (*poll-timeout* variable)
+  (*full-http-process-client-hello* variable))
 
 (mgl-pax:defsection @communication-setup
     (:title "HTTP2 handling")
   (make-ssl-context function)
   (make-client-object function)
   (process-client-hello function)
+
   (process-header function)
   (ignore-bytes function)
   (print-goaway-frame function))
@@ -788,11 +790,18 @@ Default -1 means an indefinite wait.")
           (dolist (client *clients*)
             (close-client-connection fdset client)))))))
 
+(defvar *full-http-process-client-hello*
+  (lambda () (error "Full http/2 not loaded")))
+
 (defmethod do-new-connection (socket (tls (eql :tls)) (dispatch-method (eql :async-custom))
                               &key
                                 ((:nagle *nagle*) *nagle*)
+                                (full-http nil full-http-p)
                                 ((:client-hello-callback *client-hello-callback*)
-                                 (or *client-hello-callback* #'process-client-hello)))
+                                 (cond
+                                   ((null full-http-p) *client-hello-callback*)
+                                   (full-http *full-http-process-client-hello*)
+                                   ((null full-http) #'process-client-hello))))
   "Handle new connections by adding pollfd to and then polling.
 
 When poll indicates available data, process them with openssl using BIO. Data to

@@ -3,14 +3,19 @@
 (mgl-pax:defsection @tls (:title "TLS with CL+SSL")
   "HTTP/2 in most cases needs \\TLS as an underlying layer.
 
-We use MAKE-HTTP2-TLS-CONTEXT to prepare a context that is later stored in
-*HTTP2-TLS-CONTEXT* to have (some) parameters set up properly
+Synchronous implementations (and in general implementation that use streams) use
+CL+SSL with a thin wrapper (WRAP-TO-TLS) to hide complexity of TLS.
+
+We use MAKE-HTTP2-TLS-CONTEXT to prepare a context appropriate for the HTTP/2
+communication. The context is stored in *HTTP2-TLS-CONTEXT*.
+
+ to have (some)
+parameters set up properly
 
 Servers using usocket and Lisp streams use WRAP-TO-TLS to establish TLS."
   (make-http2-tls-context function)
   (wrap-to-tls function)
   (*http2-tls-context* variable)
-
   (select-h2-callback tls-server/utils::callback))
 
 (cl+ssl::define-ssl-function ("SSL_CTX_set_alpn_select_cb" ssl-ctx-set-alpn-select-cb)
@@ -28,13 +33,14 @@ Servers using usocket and Lisp streams use WRAP-TO-TLS to establish TLS."
      (in (:pointer :char))
      (inlen :int)
      (args :pointer))
-  "To be used as a callback in ssl-ctx-set-alpn-select-cb.
+  "To be used as a callback in SSL_CTX_set_alpn_select_cb.
 
-Chooses h2 as ALPN if it was offered, otherwise the first offered.
+Chooses h2 as ALPN if it was offered by the client, otherwise the first offered.
 
-This is basically reimplemented SSL_select_next_proto, but easier than to
-use that one in ffi world."
+This is basically reimplemented SSL_select_next_proto, but easier than to use
+that one in ffi world."
   (declare (ignore args ssl))
+  ;; map over
   (loop for idx = 0 then (+ (cffi:mem-ref in :char idx) idx)
         while (< idx inlen)
         when (and (= (cffi:mem-ref in :char idx) 2)
@@ -60,19 +66,22 @@ use that one in ffi world."
   (type :int))
 
 (defun make-http2-tls-context ()
-  "make a \\TLS context suitable for http2.
+  "Make a \\TLS context suitable for HTTP/2 as per RFC9113 9.2
 
-practically, it means:
-
+Specifically:
+- Minimal TLS version 1.2,
 - ALPN callback that selects h2 if present,
-- do not request client certificates
-- do not allow ssl compression adn renegotiation.
-we should also limit allowed ciphers, but we do not."
+- do not request client certificates,
+- do not allow TLS compression and renegotiation.
+
+We should also limit allowed ciphers, but we do not.
+
+As required, We do not sent out post-handshake TLS 1.3 CertificateRequest messages.
+
+We ignore early data for now.
+"
   (let ((context
           (cl+ssl:make-context
-           ;; implementations of http/2 must use tls
-           ;; version 1.2 [tls12] or higher for http/2
-           ;; over tls.
            :min-proto-version cl+ssl::+tls1-2-version+
 
            :options (list #x20000       ; +ssl-op-no-compression+
@@ -104,6 +113,6 @@ This is a simple wrapper over CL+SSL."
              (cl+ssl:make-ssl-server-stream
               (usocket:socket-stream raw-stream)
               :certificate
-              (namestring (merge-pathnames "certs/server.pem" topdir))
-              :key (namestring (merge-pathnames "certs/server.key" topdir)))))
+              (namestring (merge-pathnames #P"certs/server.pem" topdir))
+              :key (namestring (merge-pathnames #P"certs/server.key" topdir)))))
       tls-stream)))
