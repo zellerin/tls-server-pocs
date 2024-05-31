@@ -62,34 +62,6 @@ Next would be reading the OPTIONS frame."
   (assert (= (aref header 3) 4))
   (process-header-by-wrapping client header))
 
-(defun get-32bit (vector idx)
-  (let ((stream-id 0))
-    (setf (ldb (byte 8 24) stream-id) (aref vector idx)
-          (ldb (byte 8 16) stream-id) (aref vector (incf idx))
-          (ldb (byte 8 8) stream-id) (aref vector (incf idx))
-          (ldb (byte 8 0) stream-id) (aref vector (incf idx)))
-    stream-id))
-
-(defun get-16bit (vector idx)
-  (let ((stream-id 0))
-    (setf
-     (ldb (byte 8 8) stream-id) (aref vector idx)
-     (ldb (byte 8 0) stream-id) (aref vector (incf idx)))
-    stream-id))
-
-(defun process-settings-content (client vector)
-  (loop
-    with connection = (client-application-data client)
-    for idx from 0 to (1- (length vector)) by 6
-    for identifier = (get-16bit vector idx)
-    and value = (get-32bit vector (+ idx 2))
-    for name = (find-setting-by-id identifier)
-    ;;    An endpoint that receives a SETTINGS frame with any unknown or
-    ;;    unsupported identifier MUST ignore that setting.
-    when name
-      do (set-peer-setting connection name value)
-    finally (peer-expects-settings-ack connection)))
-
 (defmethod peer-expects-settings-ack ((connection async-server))
   (let ((buffer (http2::make-octet-buffer 9)))
     (declare (dynamic-extent buffer))
