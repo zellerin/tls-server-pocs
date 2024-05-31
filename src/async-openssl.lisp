@@ -649,7 +649,7 @@ The new possible action corresponding to ① or ⑥ on the diagram above is adde
 (defvar *empty-fdset-items* nil "List of empty slots in the fdset table.")
 
 (defun set-next-action (client action size)
-  "Set action for next chunk of received data."
+  "Set action for next chunk of received data (and length of data it expects)."
   (setf (client-io-on-read client) action
         (client-octets-needed client) size))
 

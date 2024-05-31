@@ -47,6 +47,7 @@ Next would be reading the OPTIONS frame."
 
 (defun wrap-http2-callback (callback)
   (lambda (client header)
+    ;; TODO: catch errors such as connection error and handle them
     (multiple-value-bind (fn size)
         (funcall callback (client-application-data client) header)
       (declare (type compiled-function fn)
@@ -58,7 +59,7 @@ Next would be reading the OPTIONS frame."
   (funcall (wrap-http2-callback #'http2::parse-frame-header) client header))
 
 (defun check-options-process-header (client header)
-  "Read next frame and process it."
+  "Read next frame, check it is options frame, and process it."
   (assert (= (aref header 3) 4))
   (process-header-by-wrapping client header))
 
