@@ -18,10 +18,11 @@ arrive. This would be HTTP2-HELLO."
   (http2-hello function)
   )
 
-(defclass async-stream (http2::server-stream)
+(defclass async-stream (http2::server-stream body-collecting-mixin http2::multi-part-data-stream)
   ())
 
-(defclass async-server (http2::server-http2-connection)
+(defclass async-server (http2:write-buffer-connection-mixin http2::server-http2-connection
+                        http2::dispatcher-mixin)
   ((tls-server    :accessor get-tls-server    :initarg :tls-server)
    (padded        :accessor get-padded        :initarg :padded)
    (active-stream :accessor get-active-stream :initarg :active-stream)
@@ -36,11 +37,7 @@ Next would be reading the OPTIONS frame."
   (process-client-hello client vec)
   (setf (client-application-data client)
         (make-instance 'async-server
-                       :tls-server client
-                       ;; this class is defined in http2/tests, move to better place
-                       :network-stream (make-instance 'http2::pipe-end-for-write
-                                                      :write-buffer (make-array 4096 :fill-pointer 0
-                                                                                     :element-type '(unsigned-byte 8)))))
+                       :tls-server client))
   (set-next-action client #'check-options-process-header 9))
 
 (defparameter *full-http-process-client-hello* #'http2-hello)
@@ -48,11 +45,15 @@ Next would be reading the OPTIONS frame."
 (defun wrap-http2-callback (callback)
   (lambda (client header)
     ;; TODO: catch errors such as connection error and handle them
-    (multiple-value-bind (fn size)
-        (funcall callback (client-application-data client) header)
-      (declare (type compiled-function fn)
-               (fixnum size))
-      (set-next-action client (wrap-http2-callback fn) size))))
+    (let ((connection (client-application-data client)))
+      (multiple-value-bind (fn size)
+          (funcall callback connection header)
+        (declare (type compiled-function fn)
+                 (fixnum size))
+        (set-next-action client (wrap-http2-callback fn) size)))))
+
+(defmethod http2::queue-frame ((connection async-server) frame)
+  (send-unencrypted-bytes (get-tls-server connection) frame 'payload))
 
 (defun process-header-by-wrapping (client header)
   "Read next frame header and process it."
@@ -72,14 +73,8 @@ Next would be reading the OPTIONS frame."
                             'ack)))
 
 (defmethod http2::peer-ends-http-stream ((stream async-stream))
-  (let ((client (get-tls-server (get-connection stream)))
-        (id-to-process (http2::get-stream-id stream)))
-    (send-unencrypted-bytes client
-                            (tls-server/async/tls::buffer-with-changed-stream tls-server/async/tls::*header-frame* id-to-process)
-                            'response-headers)
-    (send-unencrypted-bytes client
-                            (tls-server/async/tls::buffer-with-changed-stream tls-server/async/tls::*data-frame* id-to-process)
-                            'response-payload)))
+  (with-slots (connection) stream
+     (funcall (http2::find-matching-handler (get-path stream) connection) connection stream)))
 
 (defmethod add-header ((connection async-server) stream (name string) value)
   (declare (ignore name value))
