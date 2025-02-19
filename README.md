@@ -2,6 +2,10 @@
 
 # Experiments with HTTP/2 server
 
+*Note*: This project was primarily a pilot to test how to integrate poll server
+into [http2 server](https://github.com/zellerin/http2). Now this is integrated,
+which makes this repo obsolete.
+
 ## Table of Contents
 
 - [1 Generic server interface][661c]
@@ -22,6 +26,9 @@
 - [11 Packages][d1d3]
 - [12 Experiments][300a]
     - [12.1 Clips][8595]
+
+
+
 
 ###### \[in package TLS-SERVER\]
 I wanted to play with different options for HTTP/2 server implementations. While
@@ -54,13 +61,13 @@ server types implement appropriate methods to ensure desired behaviour.
 
     Create a server on `HOST` and `PORT` that handles connections (possibly with `TLS`) using
     `DISPATCH-METHOD`.
-    
+
     `ANNOUNCE-URL-CALLBACK` is called when server is set up on the TCP level and
     receives one parameter, `URL` that server listens on. The idea is to be able to connect
     to server when `PORT` is 0, that is, random port.
-    
+
     Establishes restart [`KILL-SERVER`][23e3] to close the TCP connection and return.
-    
+
     Calls [`DO-NEW-CONNECTION`][2ab2] to actually handle the connections after the callback
     returns This function also receives the listening socket ad `TLS` and
     `DISPATCH-METHOD` as parameters.
@@ -72,12 +79,12 @@ server types implement appropriate methods to ensure desired behaviour.
     This method is implemented for the separate connection types. It waits on
     new (possibly tls) connection to the `LISTENING-SOCKET` and start handling it
     using `DISPATCH-METHOD`.
-    
+
     See [Implementations][335b] for available `DISPATCH-METHOD`.
-    
+
     `TLS` is either `NIL` or `:TLS`. Note that when using HTTP/2 without `TLS`, most clients
     have to be instructed to use tls - e.g., --http2-prior-knowledge for curl.
-    
+
     Raise `UNSUPPORTED-SERVER-SETUP` if there is no relevant method.
 
 <a id="x-28TLS-SERVER-3AKILL-SERVER-20RESTART-29"></a>
@@ -104,9 +111,9 @@ server types implement appropriate methods to ensure desired behaviour.
 - [restart] **GO-AWAY** *&OPTIONAL VALUE*
 
     Handler to be invoked to close HTTP connection from our side.
-    
+
     It is established either in [`TLS-SERVER/SYNCHRONOUS:DO-CONNECTION`][3f72].
-    
+
     TODO: Should we have it in async-cffi loop as well?
 
 <a id="x-28TLS-SERVER-3ACALLBACK-ON-SERVER-20FUNCTION-29"></a>
@@ -115,7 +122,7 @@ server types implement appropriate methods to ensure desired behaviour.
 
     Return a function that takes one parameter, `URL`, as a parameter and calls `FN` on
     it in a separate thread. Then it kills the server by invoking [`KILL-SERVER`][23e3] restart.
-    
+
     This is to be used as callback on an open server for testing it.
 
 <a id="x-28TLS-SERVER-3AURL-FROM-SOCKET-20FUNCTION-29"></a>
@@ -123,7 +130,7 @@ server types implement appropriate methods to ensure desired behaviour.
 - [function] **URL-FROM-SOCKET** *SOCKET HOST TLS*
 
     Return `URL` that combines `HOST` with the port of the `SOCKET`.
-    
+
     This is to be used as callback fn on an open server for testing it.
 
 <a id="x-28TLS-SERVER-3AURL-FROM-PORT-20FUNCTION-29"></a>
@@ -131,7 +138,7 @@ server types implement appropriate methods to ensure desired behaviour.
 - [function] **URL-FROM-PORT** *PORT HOST TLS*
 
     Return `URL` that combines `HOST` with the port of the `SOCKET`.
-    
+
     This is to be used as callback fn on an open server for testing it.
 
 <a id="x-28TLS-SERVER-3A-2ABUFFER-2A-20VARIABLE-29"></a>
@@ -152,11 +159,11 @@ Following implementations are defined:
 - [method] **DO-NEW-CONNECTION** *LISTENING-SOCKET TLS (DISPATCH-METHOD (EQL :NONE))*
 
     Handle the connection while doing nothing else.
-    
+
     Serve just one client at time: when it connects, read the incoming requests and
     handle them as they arrive. When the client sends go-away frame, close the
     connection and be ready to serve another client.
-    
+
     Obviously, there is little overhead and this version is actually pretty fast -
     for one client and in ideal conditions (especially with request pilelining).
 
@@ -180,9 +187,9 @@ Following implementations are defined:
 - [method] **DO-NEW-CONNECTION** *SOCKET (TLS (EQL NIL)) (DISPATCH-METHOD (EQL :ASYNC))*
 
     Handle new connections using cl-async event loop.
-    
+
     Pros: This version can be run in one thread and process many clients.
-    
+
     Cons: requires a specific C library, and the implementation as-is depends on
     SBCL internal function - we re-use the file descriptor of socket created by
     usocket package, as otherwise access to the port of server is complicated.
@@ -192,9 +199,9 @@ Following implementations are defined:
 - [method] **DO-NEW-CONNECTION** *SOCKET (TLS (EQL :TLS)) (DISPATCH-METHOD (EQL :ASYNC))*
 
     Handle new connections using cl-async event loop.
-    
+
     Pros: This version can be run in one thread and process many clients.
-    
+
     Cons: requires a specific C library, and the implementation as-is depends on
     SBCL internal function - we re-use the file descriptor of socket created by
     usocket package, as otherwise access to the port of server is complicated.
@@ -204,11 +211,11 @@ Following implementations are defined:
 - [method] **DO-NEW-CONNECTION** *SOCKET (TLS (EQL :TLS)) (DISPATCH-METHOD (EQL :ASYNC-CUSTOM))*
 
     Handle new connections by adding pollfd to and then polling.
-    
+
     When poll indicates available data, process them with openssl using BIO. Data to
     the client are sent to SSL to BIO to socket buffer (and again poll to write
     them).
-    
+
     This in the end does not use usocket, async nor cl+ssl - it is a direct rewrite
     from C code.
 
@@ -237,7 +244,7 @@ Simplify work with octet vectors
 - [function] **FULLY-READ-ARRAY** *STREAM VECTOR TO-READ*
 
     Read `TO-READ` octets to the octet `VECTOR`.
-    
+
     Lisp standard says that read-sequence returns less than required bytes only on
     EOF, and we rely on that; if this happens, invoke [`GO-AWAY`][6220] restart.
 
@@ -269,7 +276,7 @@ or h2load.
 - [function] **READ-CLIENT-PREFACE** *STREAM*
 
     Read the client preface from a stream and verify it.
-    
+
     Signal [`CLIENT-PREFACE-MISMATCH`][9da1] on mismatch.
 
 <a id="x-28TLS-SERVER-2FMINI-HTTP2-3A-2BGOAWAY-FRAME-TYPE-2B-20MGL-PAX-3ACONSTANT-29"></a>
@@ -280,7 +287,7 @@ or h2load.
     and server terminate the connection socket. This is kind of courtesy, and any
     side should be ready for the other side terminating connection without goaway
     frame.
-    
+
     Server can send goaway frame as well, but our servers do not.
 
 <a id="x-28TLS-SERVER-2FMINI-HTTP2-3AMAYBE-ADD-TLS-20GENERIC-FUNCTION-29"></a>
@@ -289,7 +296,7 @@ or h2load.
 
     Return either plain (if tls is nil) or `TLS` (if :tls) Lisp stream
      build upon `SOCKET` stream.
-    
+
     This is used by implementation that use usocket sockets.
 
 <a id="x-28TLS-SERVER-2FMINI-HTTP2-3ABUFFER-WITH-CHANGED-STREAM-20FUNCTION-29"></a>
@@ -402,13 +409,13 @@ Servers using usocket and Lisp streams use [`WRAP-TO-TLS`][36d5] to establish `T
 - [function] **MAKE-HTTP2-TLS-CONTEXT**
 
     make a TLS context suitable for http2.
-    
+
     practically, it means:
-    
+
     - ALPN callback that selects h2 if present,
-    
+
     - do not request client certificates
-    
+
     - do not allow ssl compression adn renegotiation.
     we should also limit allowed ciphers, but we do not.
 
@@ -418,9 +425,9 @@ Servers using usocket and Lisp streams use [`WRAP-TO-TLS`][36d5] to establish `T
 - [function] **WRAP-TO-TLS** *RAW-STREAM*
 
     Return a binary stream representing `TLS` server connection over `RAW-STREAM`.
-    
+
     Use `TLS` KEY and CERT for server identity, and [`*HTTP2-TLS-CONTEXT*`][7cb4] for the contex.
-    
+
     This is a simple wrapper over CL+SSL.
 
 <a id="x-28TLS-SERVER-2FMINI-HTTP2-3A-2AHTTP2-TLS-CONTEXT-2A-20VARIABLE-29"></a>
@@ -434,9 +441,9 @@ Servers using usocket and Lisp streams use [`WRAP-TO-TLS`][36d5] to establish `T
 - [callback] **SELECT-H2-CALLBACK** *SSL OUT OUTLEN IN INLEN ARGS*
 
     To be used as a callback in ssl-ctx-set-alpn-select-cb.
-    
+
     Chooses h2 as ALPN if it was offered, otherwise the first offered.
-    
+
     This is basically reimplemented `SSL`\_select\_next\_proto, but easier than to
     use that one in ffi world.
 
@@ -456,11 +463,11 @@ Obviously not ideal, but simple.
 - [method] **DO-NEW-CONNECTION** *LISTENING-SOCKET TLS (DISPATCH-METHOD (EQL :NONE))*
 
     Handle the connection while doing nothing else.
-    
+
     Serve just one client at time: when it connects, read the incoming requests and
     handle them as they arrive. When the client sends go-away frame, close the
     connection and be ready to serve another client.
-    
+
     Obviously, there is little overhead and this version is actually pretty fast -
     for one client and in ideal conditions (especially with request pilelining).
 
@@ -490,7 +497,7 @@ usocket.
 
     Process a HTTP2 connection naively: handle preface, and read frames till there
       is end of stream; write static response in that case.
-    
+
     Terminate if either SSL error occurs, or [`GO-AWAY`][6220] restart is invoked.
 
 <a id="x-28TLS-SERVER-3AGO-AWAY-20RESTART-29"></a>
@@ -498,9 +505,9 @@ usocket.
 - [restart] **GO-AWAY** *&OPTIONAL VALUE*
 
     Handler to be invoked to close HTTP connection from our side.
-    
+
     It is established either in [`TLS-SERVER/SYNCHRONOUS:DO-CONNECTION`][3f72].
-    
+
     TODO: Should we have it in async-cffi loop as well?
 
 <a id="x-28TLS-SERVER-2FMINI-HTTP2-3A-40USE-HTTP2-LIB-20MGL-PAX-3ASECTION-29"></a>
@@ -531,9 +538,9 @@ implementation and speed.
 - [method] **DO-NEW-CONNECTION** *SOCKET (TLS (EQL NIL)) (DISPATCH-METHOD (EQL :ASYNC))*
 
     Handle new connections using cl-async event loop.
-    
+
     Pros: This version can be run in one thread and process many clients.
-    
+
     Cons: requires a specific C library, and the implementation as-is depends on
     SBCL internal function - we re-use the file descriptor of socket created by
     usocket package, as otherwise access to the port of server is complicated.
@@ -552,21 +559,21 @@ implementation and speed.
 - [class] **CLIENT** *[STRUCTURE-OBJECT][2038]*
 
     Data of one client connection. This includes:
-    
+
     - File descriptor of underlying socket (FD),
-    
+
     - Opaque pointer to the openssl handle (`SSL`),
-    
+
     - Input and output `BIO` for exchanging data with `OPENSSL` (`RBIO`, `WBIO`),
-    
+
     - Unencrypted octets to encrypt and send (`WRITE-BUF`),
-    
+
     - Encrypted octets to send to the file descriptor (`ENCRYPT-BUF`),
-    
+
     - Callback function when read data are available (`IO-ON-READ`).
-    
+
     - Number of octets required by `IO-ON-READ`. Negative values have special handling.
-    
+
     - Client state from the low-level data flow point of view (`STATE`)
 
 
@@ -589,7 +596,7 @@ The actions are in general indicated by arrows in the diagram:
 - [function] **PROCESS-CLIENT-FD** *FD-PTR CLIENT*
 
     Process events available on `FD-PTR` (a pointer to struct pollfd) with `CLIENT`.
-    
+
     The new possible action corresponding to ① or ⑥ on the diagram above is added to the client state and [`DO-AVAILABLE-ACTIONS`][13e7] is called to react to that.
 
 <a id="x-28TLS-SERVER-2FASYNC-2FTLS-3ADO-AVAILABLE-ACTIONS-20FUNCTION-29"></a>
@@ -604,7 +611,7 @@ The actions are in general indicated by arrows in the diagram:
 
     One of possible next actions consistent with then the state of the client, or
     nil if no action is available.
-    
+
     This is factored out so that it can be traced. There is a
     [`TLS-SERVER/MEASURE::ACTIONS`][071a] clip on this function.
 
@@ -619,7 +626,7 @@ The actions are in general indicated by arrows in the diagram:
 - [function] **SSL-READ** *CLIENT VEC SIZE*
 
     Move up to `SIZE` octets from the decrypted `SSL` ③ to the `VEC`.
-    
+
     Return 0 when no data are available. Possibly remove `CAN-READ-SSL` flag.
 
 <a id="x-28TLS-SERVER-2FASYNC-2FTLS-3ASEND-UNENCRYPTED-BYTES-20FUNCTION-29"></a>
@@ -627,7 +634,7 @@ The actions are in general indicated by arrows in the diagram:
 - [function] **SEND-UNENCRYPTED-BYTES** *CLIENT NEW-DATA COMMENT*
 
     Collect new data to be encrypted and sent to client.
-    
+
     Data are just concatenated to the `ENCRYPT-BUF`. Later, they would be encrypted
     and passed.
 
@@ -636,17 +643,17 @@ The actions are in general indicated by arrows in the diagram:
 - [function] **ENCRYPT-DATA** *CLIENT*
 
     Encrypt data in client's `ENCRYPT-BUF`.
-    
+
     Do nothing if there is no data to encrypt or `SSL` not yet initialized (and return zero).
-    
-    Otherwise, use a temporary vector to write data 
+
+    Otherwise, use a temporary vector to write data
 
 <a id="x-28TLS-SERVER-2FASYNC-2FTLS-3AMOVE-ENCRYPTED-BYTES-20FUNCTION-29"></a>
 
 - [function] **MOVE-ENCRYPTED-BYTES** *CLIENT*
 
     Move data encrypted by OpenSSL to the socket write queue Ⓔ.
-    
+
     This should be called in a way friendly to Nagle algorithm. My understaning is
     this is either when we pipeline a lot of data, or when we send out somethinf
     that expects a response.
@@ -667,9 +674,9 @@ The actions are in general indicated by arrows in the diagram:
 - [function] **MAKE-SSL-CONTEXT**
 
     Make a `SSL` context for http2 server..
-    
+
     This includes public and private key pair (from files in this directory),
-    
+
     Functionally, it is same as [`TLS-SERVER/MINI-HTTP2:MAKE-HTTP2-TLS-CONTEXT`][277a];
     however, it used directly cffi and sets some parameters in a different way.
 
@@ -678,7 +685,7 @@ The actions are in general indicated by arrows in the diagram:
 - [function] **MAKE-CLIENT-OBJECT** *SOCKET CTX S-MEM*
 
     Create new [`CLIENT`][147a] object suitable for `TLS` server.
-    
+
     Initially, the ENCRYPT-BUFFER contains the settings to send, and next action is
     reading of client hello.
 
@@ -687,8 +694,8 @@ The actions are in general indicated by arrows in the diagram:
 - [function] **PROCESS-CLIENT-HELLO** *CLIENT VEC*
 
     Check first received octets to verify they are the client hello string.
-    
-    Next, read and process a header 
+
+    Next, read and process a header
 
 <a id="x-28TLS-SERVER-2FASYNC-2FTLS-3APROCESS-HEADER-20FUNCTION-29"></a>
 
@@ -732,7 +739,7 @@ Define a  locative to document CFFI callbacks.
     Exports [`CREATE-SERVER`][dd5c] (needed to invoke a server),
     [`DO-NEW-CONNECTION`][2ab2] (specialized to implement particular servers), and various
     restarts. See [Generic server interface][661c].
-    
+
     Also holds the top-level documentation sections, [Experiments with HTTP/2 server][fc93] and `@OVERVIEW`.
 
 <a id="x-28-22TLS-SERVER-2FUTILS-22-20PACKAGE-29"></a>
@@ -761,7 +768,7 @@ Define a  locative to document CFFI callbacks.
 - [clip] **ACTIONS** *CLIENT RES*
 
     Collect client state and action (data movement) selected for execution into a separate clasp file, actions.clasp.
-    
+
     Class: `CLIP::FUNCTIONAL-COMPOSITE-INSTRUMENTATION`
 
   [071a]: #x-28TLS-SERVER-2FMEASURE-3AACTIONS-20CLIP-2FDOC-3ACLIP-29 "TLS-SERVER/MEASURE:ACTIONS CLIP/DOC:CLIP"
